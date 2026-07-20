@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.pt
+.pytest_cache/
+.DS_Store
+workspace/uploads/**
+workspace/candidates/**
+workspace/state/**
+dataset/**
+!workspace/uploads/.gitkeep
+!workspace/candidates/.gitkeep
+!workspace/state/.gitkeep
+!dataset/handball/.gitkeep
+!dataset/not_handball/.gitkeep
+!dataset/uncertain/.gitkeep

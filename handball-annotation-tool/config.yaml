@@ -1,0 +1,24 @@
+models:
+  # COCO-pretrained YOLO detects people (class 0) and sports balls (class 32).
+  detector: yolo11n.pt
+  pose: yolo11n-pose.pt
+  tracker: bytetrack.yaml       # use botsort.yaml to switch trackers
+  device: auto                 # CUDA, then Apple MPS, then CPU
+
+mining:
+  confidence: 0.25           # favor recall for small/blurred broadcast balls
+  person_class_id: 0
+  ball_class_id: 32
+  arm_distance_threshold: 0.12 # ball edge within 12% of player height of an arm
+  pose_keypoint_confidence: 0.30 # retain moderately visible arm joints
+  nearby_player_margin: 0.12
+  max_nearby_players: 3
+  frames_before: 20
+  frames_after: 20
+  candidate_cooldown_frames: 40
+
+paths:
+  uploads: workspace/uploads
+  candidates: workspace/candidates
+  dataset: dataset
+  state: workspace/state
