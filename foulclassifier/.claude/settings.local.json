@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/srawo/Downloads/**)",
+      "Bash(python -c \"import torch, torchvision, sklearn, pandas, joblib, PIL; print\\('deps ok'\\)\")",
+      "Bash(cd *)",
+      "Bash(tasklist)",
+      "Bash(nvidia-smi --query-gpu=name --format=csv,noheader)",
+      "Bash(wmic process *)",
+      "PowerShell(Get-Process *)",
+      "Bash(python predict_foul.py)",
+      "Bash(python train_foul_rf.py)",
+      "Bash(python -c ' *)",
+      "PowerShell(Get-CimInstance *)",
+      "Bash(rm -f embeddings_cache.npz model.pkl holdout_test.pkl results.json frozen_prefix_cache.pt finetuned_head.pt)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('train_foul_rf.py'\\).read\\(\\)\\); ast.parse\\(open\\('predict_foul.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(echo \"EXIT_CODE:$?\")",
+      "Bash(powershell -Command \"\\(Get-Item 'C:\\\\Users\\\\srawo\\\\foul_rf_classifier\\\\finetuned_backbone.pt'\\).LastWriteTime; \\(Get-Item 'C:\\\\Users\\\\srawo\\\\foul_rf_classifier\\\\train_output.log'\\).CreationTime\")",
+      "PowerShell(Start-Process powershell -WorkingDirectory \"C:\\\\Users\\\\srawo\\\\foul_rf_classifier\")",
+      "Bash(cd C:\\\\Users\\\\srawo\\\\foul_rf_classifier *)",
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"Name='python.exe'\\\\\" | Select-Object ProcessId,CommandLine | Format-List\")",
+      "Bash(taskkill *)",
+      "Bash(gh repo *)",
+      "Bash(gh search *)"
+    ]
+  }
+}

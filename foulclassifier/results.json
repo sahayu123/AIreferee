@@ -1,0 +1,12 @@
+{
+  "test_accuracy": 0.3712984054669704,
+  "test_balanced_accuracy": 0.5212454212454213,
+  "val_balanced_accuracy": 0.5838042909471481,
+  "threshold": 0.7,
+  "best_rf_params": {
+    "rf__n_estimators": 200,
+    "rf__min_samples_leaf": 4,
+    "rf__max_features": "sqrt",
+    "rf__max_depth": 10
+  }
+}

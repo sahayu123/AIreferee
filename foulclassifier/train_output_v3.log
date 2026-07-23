@@ -1,0 +1,42 @@
+[OK] train: 2819 clips
+[OK] test: 293 clips
+[OK] valid: 399 clips
+[OK] Pooled 3511 clips total (No Foul=391, Foul=3120)
+[OK] Train: 2633 clips | Val: 439 clips | Test: 439 clips
+[OK] Fine-tune subset (majority undersampled to match minority): 586 clips (No Foul=293, Foul=293)
+
+[->] Fine-tuning the full backbone for up to 15 epochs (early stop after 4 epochs without improvement)...
+    epoch  1/15  loss=0.7351  val balanced_acc=0.507  (best)
+    epoch  2/15  loss=0.7229  val balanced_acc=0.521  (best)
+    epoch  3/15  loss=0.6888  val balanced_acc=0.553  (best)
+    epoch  4/15  loss=0.6782  val balanced_acc=0.483
+    epoch  5/15  loss=0.6726  val balanced_acc=0.494
+    epoch  6/15  loss=0.6483  val balanced_acc=0.528
+    epoch  7/15  loss=0.6223  val balanced_acc=0.503
+    [->] No improvement for 4 epochs, stopping early.
+[OK] Restored best checkpoint (val balanced_acc=0.553)
+[OK] Fine-tuned backbone saved -> C:\Users\srawo\foul_rf_classifier\finetuned_backbone.pt
+[->] Re-embedding all clips with the fine-tuned backbone...
+[OK] Task-adapted embeddings cached -> C:\Users\srawo\foul_rf_classifier\embeddings_cache.npz
+[OK] Balanced train set via SMOTE: 4680 clips (No Foul=2340, Foul=2340)
+
+[->] Searching RandomForest hyperparameters via 5-fold CV...
+[OK] Best RF params: {'n_estimators': 500, 'min_samples_leaf': 1, 'max_features': 'log2', 'max_depth': None} (cv balanced_acc=0.9816)
+[OK] Picked decision threshold=0.75 (val balanced_acc=0.5535 vs 0.5000 at 0.5)
+
+=== TEST accuracy: 0.4715 (47.2%) | balanced accuracy: 0.5330 (53.3%) | threshold=0.75 ===
+              precision    recall  f1-score   support
+
+     No Foul       0.12      0.61      0.21        49
+        Foul       0.90      0.45      0.60       390
+
+    accuracy                           0.47       439
+   macro avg       0.51      0.53      0.40       439
+weighted avg       0.82      0.47      0.56       439
+
+Confusion matrix (rows=true, cols=predicted):
+[[ 30  19]
+ [213 177]]
+
+[OK] Model saved -> C:\Users\srawo\foul_rf_classifier\model.pkl
+[OK] Held-out set saved -> C:\Users\srawo\foul_rf_classifier\holdout_test.pkl (439 clips)
