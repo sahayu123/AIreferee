@@ -107,3 +107,17 @@ class AnnotationStore:
                                      "labeled_at": timestamp, "candidate": json.loads(metadata_json)}))
         output.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         return output
+
+    def unlabel(self, candidate_id: str) -> None:
+        """Remove a label and its copied dataset artifacts, preserving review candidates."""
+        with self._write_lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT label FROM annotations WHERE candidate_id = ?", (candidate_id,)
+                ).fetchone()
+                if not row:
+                    return
+                connection.execute("DELETE FROM annotations WHERE candidate_id = ?", (candidate_id,))
+            destination = self.config.dataset_dir / str(row[0]) / candidate_id
+            if destination.exists():
+                shutil.rmtree(destination)

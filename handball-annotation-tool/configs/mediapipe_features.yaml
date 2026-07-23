@@ -1,0 +1,21 @@
+models:
+  detector: yolo11n.pt
+  mediapipe_pose: models/pose_landmarker_full.task
+  tracker: bytetrack.yaml
+  device: auto
+
+extraction:
+  person_confidence: 0.25
+  ball_confidence: 0.10
+  pose_detection_confidence: 0.35
+  pose_presence_confidence: 0.35
+  pose_input_size: 512
+  crop_margin: 0.25
+  max_nearby_players: 3
+  sequence_length: 12
+  overlay_examples_per_domain: 5
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  features: artifacts/features
+  overlays: artifacts/overlays
