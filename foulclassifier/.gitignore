@@ -1,2 +1,19 @@
 finetuned_backbone.pt
-finetuned_backbone.pt
+
+# Dedicated MediaPipe venv (Python 3.12) -- rebuild via requirements-test.txt
+.venv-mediapipe/
+
+# Auto-downloaded MediaPipe model assets
+mediapipe_models/
+
+# Rendered annotated-video output (grows every predict_foul.py run;
+# already covered by the root .gitignore's *.mp4 too)
+rendered_videos/
+
+# Pose-feature extraction cache/checkpoint -- regenerate via
+# extract_pose_features.py rather than tracking in git
+pose_features_cache.npz
+pose_features_cache.partial.npz
+
+# Claude Code local session config/permissions
+.claude/
