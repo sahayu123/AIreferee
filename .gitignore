@@ -1,0 +1,28 @@
+# SoccerNet data and generated frames must stay off GitHub.
+data/
+dataset/
+datasets/
+processed_frames/
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Model checkpoints and experiment artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Python and notebook caches
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Local secrets and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
