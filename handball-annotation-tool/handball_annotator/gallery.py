@@ -41,7 +41,8 @@ html, body {{ margin: 0; height: 100%; background: #0e1117; color: white; font-f
 <script>
 const images = {json.dumps(images)};
 const offsets = {json.dumps(offsets)};
-let current = Math.min({center_index}, Math.max(images.length - 1, 0));
+// Always begin at the first frame so review naturally moves forward in time.
+let current = 0;
 const viewer = document.getElementById('viewer');
 const image = document.getElementById('frame');
 const caption = document.getElementById('caption');
@@ -70,4 +71,3 @@ document.addEventListener('keydown', event => {{
 }});
 show(current);
 </script></body></html>"""
-

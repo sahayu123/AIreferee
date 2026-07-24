@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 *.pt
+*.task
+artifacts/features/**
+artifacts/overlays/**
+artifacts/checkpoints/**
+artifacts/logs/**
+artifacts/reports/**
 .pytest_cache/
 .DS_Store
 workspace/uploads/**
@@ -14,3 +20,8 @@ dataset/**
 !dataset/handball/.gitkeep
 !dataset/not_handball/.gitkeep
 !dataset/uncertain/.gitkeep
+!artifacts/features/.gitkeep
+!artifacts/overlays/.gitkeep
+!artifacts/checkpoints/.gitkeep
+!artifacts/logs/.gitkeep
+!artifacts/reports/.gitkeep

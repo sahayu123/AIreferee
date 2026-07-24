@@ -61,6 +61,91 @@ streamlit run app.py
 
 The browser interface lets you upload MP4, MOV, MKV, AVI, or M4V footage. Select **Find contact candidates**, leave the page open during processing, and then review each result. Each source video has an independent review tab and remembers its candidate position. The frame viewer supports thumbnails, previous/next controls, keyboard arrow keys, and fullscreen navigation. CPU processing of a full match can take a long time; CUDA is strongly recommended for large videos.
 
+To sample legal-play/non-handball windows progressively from full matches, run the separate application:
+
+```bash
+streamlit run negative_sampler_app.py
+```
+
+It presents one 41-frame window at a time at an adjustable interval (five seconds by default). Each clip autoplays in a continuous loop, with an optional manual frame-by-frame preview. Accepted windows join `dataset/not_handball` in the same format as annotations from the main app. Rejections, changes, stopping, and resuming are saved independently.
+
+## YOLO + MediaPipe training pipeline
+
+The training code is intentionally separate from both annotation interfaces. It uses YOLO person/ball detections, ByteTrack identities, MediaPipe shoulder/elbow/wrist landmarks, and a small temporal GRU. Imported `processed_frames_no_handball` data is filtered to auxiliary CSV label `1` only; label `0` actions and `dataset/uncertain` are excluded.
+
+Install dependencies and download the official MediaPipe Pose Landmarker Full model:
+
+```bash
+python -m pip install -r requirements.txt
+python -m training.download_models
+```
+
+Build the canonical manifest and fixed leakage-safe folds:
+
+```bash
+python -m training.manifest \
+    --output artifacts/manifests/dataset.csv \
+    --imported-label 1
+```
+
+Extract and cache YOLO/ByteTrack/MediaPipe features. This is the expensive step and resumes by skipping existing `.npz` files:
+
+```bash
+python -m training.features \
+    --config configs/mediapipe_features.yaml
+```
+
+On macOS, MediaPipe needs access to the normal graphics runtime. If an IDE sandbox prevents that initialization, run the command from Terminal.
+
+Inspect the generated contact sheets under `artifacts/overlays`, then create a detection-quality report before training:
+
+```bash
+python -m training.quality_report
+```
+
+Train the interpretable baselines:
+
+```bash
+python -m training.baseline --model logistic --fold 0
+python -m training.baseline --model random_forest --fold 0
+```
+
+Train the temporal GRU:
+
+```bash
+python -m training.gru \
+    --config configs/temporal_classifier.yaml \
+    --fold 0
+```
+
+Repeat folds `0` through `4`, then summarize:
+
+```bash
+python -m training.evaluate --summarize
+```
+
+Resume an interrupted training run:
+
+```bash
+python -m training.gru \
+    --fold 0 \
+    --resume artifacts/checkpoints/gru_fold0_last.pt
+```
+
+Classify a labeled or workspace candidate and save an evidence overlay:
+
+```bash
+python -m training.inference \
+    --input dataset/handball/CANDIDATE_ID \
+    --checkpoint artifacts/checkpoints/gru_fold0_best.pt \
+    --output outputs/prediction.json \
+    --overlay outputs/prediction_overlay.jpg
+```
+
+Feature extraction must be audited before classifier results are trusted. Compare ball and pose detection rates across native positives, native negatives, and 224×224 imported negatives. A large domain gap means the classifier may learn detection quality rather than handball.
+
+Current smoke-test warning: on the first imported 224×224 action, YOLO found a selected player in 11/12 frames, but MediaPipe Full recovered no usable arm pose and YOLO found the ball in only 1/12 frames. Full imported-data extraction and classifier training should remain gated until a representative quality sample is checked. Original-resolution imported footage, a soccer-specific ball detector, or a different pose estimator may be required; training with systematically missing imported features would create a class shortcut.
+
 ## Files and labels
 
 ```text

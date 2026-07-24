@@ -98,6 +98,84 @@ def _candidate_id(source: Path, frame_index: int) -> str:
     return f"{source.stem}_{digest}_f{frame_index:08d}"
 
 
+def create_manual_candidate(
+    parent_candidate: Path,
+    center_frame: int,
+    config: AppConfig,
+) -> Path:
+    """Create a clean 41-frame candidate centered where the annotator chooses."""
+    parent_metadata = json.loads((parent_candidate / "metadata.json").read_text(encoding="utf-8"))
+    return create_manual_candidate_from_video(
+        Path(parent_metadata["source_path"]), center_frame, config,
+        parent_candidate_id=str(parent_metadata["candidate_id"]),
+    )
+
+
+def create_manual_candidate_from_video(
+    source: Path,
+    center_frame: int,
+    config: AppConfig,
+    parent_candidate_id: str | None = None,
+) -> Path:
+    """Create a clean 41-frame candidate directly from an uploaded video."""
+    source = source.resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Original uploaded video not found: {source}")
+    capture = cv2.VideoCapture(str(source))
+    if not capture.isOpened():
+        raise RuntimeError(f"Video cannot be opened: {source}")
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0)
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    start = center_frame - config.frames_before
+    end = center_frame + config.frames_after
+    if start < 0 or (total_frames and end >= total_frames):
+        capture.release()
+        raise ValueError("The selected center is too close to the beginning or end for a full 41-frame window.")
+    capture.set(cv2.CAP_PROP_POS_FRAMES, start)
+    frames: list[np.ndarray] = []
+    try:
+        for _ in range(start, end + 1):
+            ok, frame = capture.read()
+            if not ok:
+                break
+            frames.append(frame)
+    finally:
+        capture.release()
+    expected = config.frames_before + config.frames_after + 1
+    if len(frames) != expected:
+        raise RuntimeError(f"Could only read {len(frames)} of the required {expected} frames.")
+
+    candidate_id = f"{_candidate_id(source, center_frame)}_manual"
+    directory = config.candidates_dir / candidate_id
+    clean_dir, evidence_dir = directory / "clean_frames", directory / "evidence_frames"
+    clean_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    for old_frame in (*clean_dir.glob("*.jpg"), *evidence_dir.glob("*.jpg")):
+        old_frame.unlink()
+    for index, frame in enumerate(frames):
+        cv2.imwrite(str(clean_dir / f"frame_{index:04d}.jpg"), frame)
+        # Manual windows have no inferred evidence; the review toggle remains usable.
+        cv2.imwrite(str(evidence_dir / f"frame_{index:04d}.jpg"), frame)
+    _codec_video(frames, directory / "clean.mp4", fps)
+    _codec_video(frames, directory / "evidence.mp4", fps)
+    metadata = {
+        "candidate_id": candidate_id,
+        "source_name": source.name,
+        "source_path": str(source),
+        "center_frame": int(center_frame),
+        "center_time_seconds": round(center_frame / fps, 3),
+        "frames_before": config.frames_before,
+        "frames_after": config.frames_after,
+        "fps": fps,
+        "player_track_id": None,
+        "closest_arm": None,
+        "manual_selection": True,
+        "parent_candidate_id": parent_candidate_id,
+    }
+    (directory / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return directory
+
+
 def mine_video(source: Path, config: AppConfig, progress: ProgressCallback | None = None) -> list[Path]:
     source = source.resolve()
     if not source.is_file():
