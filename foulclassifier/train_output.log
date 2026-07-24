@@ -1,0 +1,36 @@
+[OK] train: 2819 clips
+[OK] test: 293 clips
+[OK] valid: 399 clips
+[OK] Pooled 3511 clips total (No Foul=391, Foul=3120)
+[OK] Train: 2633 clips | Test: 878 clips
+
+[->] Fine-tuning the full backbone for up to 10 epochs (early stop after 3 epochs without improvement)...
+    epoch  1/10  loss=0.7525  val balanced_acc=0.506  (best)
+    epoch  2/10  loss=0.7108  val balanced_acc=0.481
+    epoch  3/10  loss=0.6839  val balanced_acc=0.484
+    epoch  4/10  loss=0.6680  val balanced_acc=0.479
+    [->] No improvement for 3 epochs, stopping early.
+[OK] Restored best checkpoint (val balanced_acc=0.506)
+[OK] Fine-tuned backbone saved -> C:\Users\srawo\foul_rf_classifier\finetuned_backbone.pt
+[->] Re-embedding all clips with the fine-tuned backbone...
+[OK] Task-adapted embeddings cached -> C:\Users\srawo\foul_rf_classifier\embeddings_cache.npz
+[OK] Balanced train set via oversampling: 4680 clips (No Foul=2340, Foul=2340)
+
+[->] Training RandomForestClassifier...
+
+=== TEST accuracy: 0.8884 (88.8%) | balanced accuracy: 0.5000 (50.0%) ===
+              precision    recall  f1-score   support
+
+     No Foul       0.00      0.00      0.00        98
+        Foul       0.89      1.00      0.94       780
+
+    accuracy                           0.89       878
+   macro avg       0.44      0.50      0.47       878
+weighted avg       0.79      0.89      0.84       878
+
+Confusion matrix (rows=true, cols=predicted):
+[[  0  98]
+ [  0 780]]
+
+[OK] Model saved -> C:\Users\srawo\foul_rf_classifier\model.pkl
+[OK] Held-out set saved -> C:\Users\srawo\foul_rf_classifier\holdout_test.pkl (878 clips)

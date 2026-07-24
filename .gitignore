@@ -1,27 +1,28 @@
-# Python
-__pycache__/
-*.pyc
+# SoccerNet data and generated frames must stay off GitHub.
+data/
+dataset/
+datasets/
+processed_frames/
 
-# Dedicated MediaPipe venv (Python 3.12) -- rebuild via requirements-test.txt
-.venv-mediapipe/
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
 
-# Claude Code local session config/permissions
-.claude/
-
-# Trained model artifacts / caches -- regenerate via train_foul_rf.py +
-# extract_pose_features.py rather than tracking large binaries in git
-# (finetuned_backbone.pt alone exceeds GitHub's 100MB file limit)
+# Model checkpoints and experiment artifacts
 *.pt
-*.pkl
-embeddings_cache.npz
-pose_features_cache.npz
-pose_features_cache.partial.npz
+*.pth
+*.ckpt
+*.onnx
 
-# Auto-downloaded MediaPipe model assets
-mediapipe_models/
+# Python and notebook caches
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
 
-# Rendered annotated-video output (grows every predict_foul.py run)
-rendered_videos/
-
-# Training run logs
-*.log
+# Local secrets and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
