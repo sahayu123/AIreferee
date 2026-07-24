@@ -1,0 +1,3 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv-mediapipe\\Scripts\\python.exe"
+}

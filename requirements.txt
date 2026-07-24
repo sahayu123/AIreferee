@@ -1,0 +1,9 @@
+# torch/torchvision are NOT pinned here -- install the CUDA build matching
+# the server's GPU driver separately, e.g.:
+#   pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cu121
+# (check https://pytorch.org/get-started/locally/ for the right cuXXX tag)
+scikit-learn==1.9.0
+imbalanced-learn==0.14.2
+numpy==2.4.5
+joblib==1.5.3
+opencv-python==5.0.0.93

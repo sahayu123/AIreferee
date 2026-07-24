@@ -1,0 +1,21 @@
+# Requirements for predict_foul.py's environment (.venv-mediapipe).
+# Separate from the main project's requirements.txt (used for training,
+# train_foul_rf.py) because MediaPipe has no Windows wheels past Python 3.12:
+#
+#   py -3.12 -m venv .venv-mediapipe
+#   .\.venv-mediapipe\Scripts\pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
+#   .\.venv-mediapipe\Scripts\pip install -r requirements-test.txt
+#
+# torch/torchvision are CPU builds here (installed separately above, see the
+# index-url) -- unlike the +xpu GPU builds requirements.txt documents for
+# training, inference on a handful of frames per clip doesn't need a GPU.
+# scikit-learn / imbalanced-learn are pinned to match requirements.txt exactly:
+# model.pkl pickles a full imblearn Pipeline (SMOTE + RandomForestClassifier),
+# and unpickling across mismatched versions risks breaking or misbehaving.
+mediapipe==0.10.35
+pillow==12.3.0
+numpy
+scikit-learn==1.9.0
+imbalanced-learn==0.14.2
+joblib==1.5.3
+opencv-contrib-python==5.0.0.93
