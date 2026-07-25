@@ -114,13 +114,15 @@ def assign_folds(manifest: pd.DataFrame, folds: int, seed: int) -> pd.DataFrame:
 
 def build_manifest(
     dataset: Path,
-    imported: Path,
     output: Path,
-    imported_label: str = "1",
     folds: int = 5,
     seed: int = 42,
+    imported: Path | None = None,
+    imported_label: str = "1",
 ) -> pd.DataFrame:
-    rows = _native_rows(dataset) + _imported_rows(imported, imported_label)
+    rows = _native_rows(dataset)
+    if imported is not None:
+        rows += _imported_rows(imported, imported_label)
     manifest = assign_folds(pd.DataFrame(rows), folds, seed)
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest.to_csv(output, index=False)
@@ -130,6 +132,11 @@ def build_manifest(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build a grouped handball training manifest.")
     parser.add_argument("--dataset", default="dataset")
+    parser.add_argument(
+        "--include-imported",
+        action="store_true",
+        help="Include processed_frames_no_handball data. Disabled by default.",
+    )
     parser.add_argument("--imported", default="dataset/processed_frames_no_handball")
     parser.add_argument("--output", default="artifacts/manifests/dataset.csv")
     parser.add_argument("--imported-label", default="1", help="Only this imported CSV label is used as negative.")
@@ -137,8 +144,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     manifest = build_manifest(
-        project_path(args.dataset), project_path(args.imported), project_path(args.output),
-        args.imported_label, args.folds, args.seed,
+        project_path(args.dataset),
+        project_path(args.output),
+        args.folds,
+        args.seed,
+        project_path(args.imported) if args.include_imported else None,
+        args.imported_label,
     )
     unique = manifest.drop_duplicates("example_id")
     print(f"Wrote {len(manifest)} views representing {len(unique)} independent examples to {project_path(args.output)}")

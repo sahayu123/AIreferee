@@ -10,6 +10,7 @@ POSE_LANDMARKER_FULL_URL = (
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
     "pose_landmarker_full/float16/latest/pose_landmarker_full.task"
 )
+YOLO11N_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt"
 
 
 def download(url: str, destination: Path, overwrite: bool = False) -> Path:
@@ -30,11 +31,17 @@ def download(url: str, destination: Path, overwrite: bool = False) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download external MediaPipe model assets.")
-    parser.add_argument("--output", default="models/pose_landmarker_full.task")
+    parser = argparse.ArgumentParser(description="Download external YOLO and MediaPipe model assets.")
+    parser.add_argument(
+        "--output",
+        default="models/pose_landmarker_full.task",
+        help="MediaPipe Pose Landmarker output path.",
+    )
+    parser.add_argument("--detector-output", default="yolo11n.pt")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
     download(POSE_LANDMARKER_FULL_URL, project_path(args.output), args.overwrite)
+    download(YOLO11N_URL, project_path(args.detector_output), args.overwrite)
 
 
 if __name__ == "__main__":

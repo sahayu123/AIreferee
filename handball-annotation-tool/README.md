@@ -71,9 +71,9 @@ It presents one 41-frame window at a time at an adjustable interval (five second
 
 ## YOLO + MediaPipe training pipeline
 
-The training code is intentionally separate from both annotation interfaces. It uses YOLO person/ball detections, ByteTrack identities, MediaPipe shoulder/elbow/wrist landmarks, and a small temporal GRU. Imported `processed_frames_no_handball` data is filtered to auxiliary CSV label `1` only; label `0` actions and `dataset/uncertain` are excluded.
+The training code is intentionally separate from both annotation interfaces. It uses YOLO person/ball detections, ByteTrack identities, MediaPipe shoulder/elbow/wrist landmarks, and a small temporal GRU. The canonical training manifest uses only `dataset/handball` and `dataset/not_handball`; `dataset/processed_frames_no_handball` and `dataset/uncertain` are excluded.
 
-Install dependencies and download the official MediaPipe Pose Landmarker Full model:
+Install dependencies and download the official YOLO11n and MediaPipe Pose Landmarker Full models:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -84,8 +84,7 @@ Build the canonical manifest and fixed leakage-safe folds:
 
 ```bash
 python -m training.manifest \
-    --output artifacts/manifests/dataset.csv \
-    --imported-label 1
+    --output artifacts/manifests/dataset.csv
 ```
 
 Extract and cache YOLO/ByteTrack/MediaPipe features. This is the expensive step and resumes by skipping existing `.npz` files:
@@ -142,9 +141,7 @@ python -m training.inference \
     --overlay outputs/prediction_overlay.jpg
 ```
 
-Feature extraction must be audited before classifier results are trusted. Compare ball and pose detection rates across native positives, native negatives, and 224×224 imported negatives. A large domain gap means the classifier may learn detection quality rather than handball.
-
-Current smoke-test warning: on the first imported 224×224 action, YOLO found a selected player in 11/12 frames, but MediaPipe Full recovered no usable arm pose and YOLO found the ball in only 1/12 frames. Full imported-data extraction and classifier training should remain gated until a representative quality sample is checked. Original-resolution imported footage, a soccer-specific ball detector, or a different pose estimator may be required; training with systematically missing imported features would create a class shortcut.
+Feature extraction must be audited before classifier results are trusted. Compare ball and pose detection rates across the handball and not-handball classes. A large quality gap means the classifier may learn detection quality rather than handball.
 
 ## Files and labels
 
