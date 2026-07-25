@@ -14,7 +14,6 @@ from handball_annotator.runtime import get_device, seed_everything
 
 from .config import load_train_config
 from .data import FeatureView, RandomViewDataset, load_views, normalization
-from .features import FEATURE_NAMES
 from .logging_utils import configure_logging
 from .metrics import binary_metrics, save_metrics
 
@@ -89,7 +88,8 @@ def train_gru(config_path: str | Path, fold: int | None = None, resume: Path | N
     sampler = WeightedRandomSampler(sample_weights, len(train_dataset), replacement=True, generator=generator)
     loader = DataLoader(train_dataset, batch_size=config.batch_size, sampler=sampler, num_workers=0)
 
-    model = TemporalGRU(len(FEATURE_NAMES), config.hidden_size, config.layers, config.dropout).to(device)
+    feature_names = list(train_views[0].feature_names)
+    model = TemporalGRU(len(feature_names), config.hidden_size, config.layers, config.dropout).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
@@ -105,6 +105,10 @@ def train_gru(config_path: str | Path, fold: int | None = None, resume: Path | N
         if not resume.is_file():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume}")
         state = torch.load(resume, map_location=device, weights_only=False)
+        if list(state.get("feature_names", ())) != feature_names:
+            raise ValueError("Resume checkpoint feature schema does not match the training artifacts")
+        if int(state["model_config"]["input_size"]) != len(feature_names):
+            raise ValueError("Resume checkpoint input size does not match its feature schema")
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         start_epoch = int(state["epoch"]) + 1
@@ -143,9 +147,9 @@ def train_gru(config_path: str | Path, fold: int | None = None, resume: Path | N
         checkpoint = {
             "model": model.state_dict(), "optimizer": optimizer.state_dict(),
             "epoch": epoch, "best_pr_auc": max(best_pr_auc, float(metrics["pr_auc"])),
-            "mean": mean, "std": std, "feature_names": FEATURE_NAMES,
+            "mean": mean, "std": std, "feature_names": feature_names,
             "fold": fold, "model_config": {
-                "input_size": len(FEATURE_NAMES), "hidden_size": config.hidden_size,
+                "input_size": len(feature_names), "hidden_size": config.hidden_size,
                 "layers": config.layers, "dropout": config.dropout,
             },
         }
@@ -185,4 +189,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

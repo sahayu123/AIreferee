@@ -1,0 +1,20 @@
+training:
+  device: auto
+  seed: 42
+  folds: 5
+  fold: 0
+  epochs: 60
+  batch_size: 16
+  hidden_size: 64
+  layers: 2
+  dropout: 0.25
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 10
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  features: artifacts/features_goalkeeper
+  checkpoints: artifacts/checkpoints_goalkeeper
+  reports: artifacts/reports_goalkeeper
+  logs: artifacts/logs_goalkeeper

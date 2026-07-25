@@ -15,6 +15,19 @@ def project_path(value: str | Path) -> Path:
 
 
 @dataclass(frozen=True)
+class RoleConfig:
+    enabled: bool
+    model: str
+    batch_size: int
+    crop_margin: float
+    goalkeeper_prompts: tuple[str, ...]
+    outfield_prompts: tuple[str, ...]
+    referee_prompts: tuple[str, ...]
+    confidence_threshold: float
+    margin_threshold: float
+
+
+@dataclass(frozen=True)
 class FeatureConfig:
     detector: Path
     mediapipe_model: Path
@@ -31,7 +44,9 @@ class FeatureConfig:
     manifest: Path
     features_dir: Path
     overlays_dir: Path
+    role_audits_dir: Path
     overlay_examples_per_domain: int
+    role: RoleConfig
 
 
 @dataclass(frozen=True)
@@ -72,6 +87,8 @@ def load_feature_config(path: str | Path) -> FeatureConfig:
     raw = _read(path)
     try:
         model, extraction, paths = raw["models"], raw["extraction"], raw["paths"]
+        role = raw.get("player_role", {})
+        prompts = role.get("prompts", {})
         return FeatureConfig(
             detector=project_path(model["detector"]),
             mediapipe_model=project_path(model["mediapipe_pose"]),
@@ -88,7 +105,30 @@ def load_feature_config(path: str | Path) -> FeatureConfig:
             manifest=project_path(paths["manifest"]),
             features_dir=project_path(paths["features"]),
             overlays_dir=project_path(paths["overlays"]),
+            role_audits_dir=project_path(paths.get("role_audits", "artifacts/role_audits")),
             overlay_examples_per_domain=int(extraction.get("overlay_examples_per_domain", 5)),
+            role=RoleConfig(
+                enabled=bool(role.get("enabled", False)),
+                model=str(role.get("model", "openai/clip-vit-base-patch32")),
+                batch_size=int(role.get("batch_size", 16)),
+                crop_margin=float(role.get("crop_margin", 0.05)),
+                goalkeeper_prompts=tuple(prompts.get("goalkeeper", (
+                    "a professional soccer goalkeeper",
+                    "a soccer goalkeeper wearing goalkeeper gloves",
+                    "a soccer goalkeeper in a distinct goalkeeper uniform",
+                ))),
+                outfield_prompts=tuple(prompts.get("outfield", (
+                    "an outfield soccer player",
+                    "a soccer defender midfielder or forward",
+                    "a soccer player wearing a normal team uniform",
+                ))),
+                referee_prompts=tuple(prompts.get("referee", (
+                    "a soccer referee officiating a match",
+                    "a football match official wearing a referee uniform",
+                ))),
+                confidence_threshold=float(role.get("confidence_threshold", 0.70)),
+                margin_threshold=float(role.get("margin_threshold", 0.20)),
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Invalid feature configuration: {exc}") from exc

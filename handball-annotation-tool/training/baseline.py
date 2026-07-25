@@ -14,7 +14,6 @@ from sklearn.preprocessing import StandardScaler
 
 from .config import load_train_config
 from .data import aggregate_sequence, load_views
-from .features import FEATURE_NAMES
 from .logging_utils import configure_logging
 from .metrics import binary_metrics, save_metrics
 
@@ -38,6 +37,7 @@ def train_baseline(config_path: str | Path, model_name: str, fold: int | None = 
     config = load_train_config(config_path)
     fold = config.fold if fold is None else fold
     views = load_views(config.manifest, config.features_dir)
+    feature_names = list(views[0].feature_names)
     train = [view for view in views if view.fold != fold]
     validation = [view for view in views if view.fold == fold]
     logger = configure_logging(config.logs_dir / f"baseline_{model_name}_fold{fold}.log")
@@ -70,7 +70,7 @@ def train_baseline(config_path: str | Path, model_name: str, fold: int | None = 
     config.checkpoints_dir.mkdir(parents=True, exist_ok=True)
     config.reports_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = config.checkpoints_dir / f"{model_name}_fold{fold}.joblib"
-    joblib.dump({"model": model, "feature_names": FEATURE_NAMES, "fold": fold}, checkpoint)
+    joblib.dump({"model": model, "feature_names": feature_names, "fold": fold}, checkpoint)
     predictions.to_csv(config.reports_dir / f"{model_name}_fold{fold}_predictions.csv", index=False)
     save_metrics(metrics, config.reports_dir / f"{model_name}_fold{fold}_metrics.json")
     logger.info("%s", json.dumps(metrics, indent=2))
@@ -88,4 +88,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

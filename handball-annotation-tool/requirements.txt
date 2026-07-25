@@ -1,6 +1,8 @@
 streamlit>=1.36
 torch>=2.2
 torchvision>=0.17
+transformers>=4.45
+safetensors>=0.4
 ultralytics>=8.3
 lap>=0.5.12
 opencv-python>=4.9

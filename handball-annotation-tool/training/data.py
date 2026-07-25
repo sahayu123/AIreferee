@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from .features import FEATURE_NAMES, feature_path
+from .features import feature_path
 
 
 @dataclass(frozen=True)
@@ -22,9 +22,15 @@ class FeatureView:
     fold: int
     path: Path
     features: np.ndarray
+    feature_names: tuple[str, ...]
 
 
-def load_views(manifest_path: Path, features_dir: Path, require_all: bool = True) -> list[FeatureView]:
+def load_views(
+    manifest_path: Path,
+    features_dir: Path,
+    require_all: bool = True,
+    target_feature_names: tuple[str, ...] | list[str] | None = None,
+) -> list[FeatureView]:
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
     manifest = pd.read_csv(manifest_path)
@@ -37,11 +43,24 @@ def load_views(manifest_path: Path, features_dir: Path, require_all: bool = True
             continue
         loaded = np.load(path)
         features = loaded["features"].astype(np.float32)
-        if features.ndim != 2 or features.shape[1] != len(FEATURE_NAMES):
+        metadata = json.loads(str(loaded["metadata"]))
+        feature_names = tuple(str(name) for name in metadata.get("feature_names", ()))
+        if features.ndim != 2 or features.shape[1] != len(feature_names):
             raise ValueError(f"Unexpected feature shape in {path}: {features.shape}")
+        if len(set(feature_names)) != len(feature_names):
+            raise ValueError(f"Duplicate feature names in {path}")
+        if target_feature_names is not None:
+            missing_names = [name for name in target_feature_names if name not in feature_names]
+            if missing_names:
+                raise ValueError(f"Features missing from {path}: {missing_names}")
+            indices = [feature_names.index(name) for name in target_feature_names]
+            features = features[:, indices]
+            feature_names = tuple(target_feature_names)
+        if views and views[0].feature_names != feature_names:
+            raise ValueError(f"Mixed feature schemas: {views[0].path} and {path}")
         views.append(FeatureView(
             str(row["example_id"]), str(row["view_id"]), int(row["label"]),
-            str(row["domain"]), int(row["fold"]), path, features,
+            str(row["domain"]), int(row["fold"]), path, features, feature_names,
         ))
     if missing and require_all:
         raise FileNotFoundError(
@@ -102,4 +121,3 @@ def normalization(views: list[FeatureView]) -> tuple[np.ndarray, np.ndarray]:
 def feature_metadata(path: Path) -> dict[str, object]:
     loaded = np.load(path)
     return json.loads(str(loaded["metadata"]))
-

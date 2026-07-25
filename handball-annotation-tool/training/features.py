@@ -50,6 +50,7 @@ FEATURE_NAMES.extend([
     "left_wrist_motion", "right_wrist_motion",
     "pose_valid_fraction", "arm_min_distance",
 ])
+GOALKEEPER_FEATURE_NAMES = FEATURE_NAMES + ["goalkeeper_score"]
 
 
 @dataclass
@@ -68,6 +69,58 @@ class FrameResult:
     vector: np.ndarray
     quality: float
     overlay: np.ndarray
+    player_crop: np.ndarray | None = None
+
+
+class ZeroShotRoleScorer:
+    CLASSES = ("goalkeeper", "outfield", "referee")
+
+    def __init__(self, config):
+        try:
+            import torch
+            from transformers import AutoModel, AutoProcessor
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install transformers and Pillow before enabling zero-shot player-role scoring."
+            ) from exc
+        self.torch = torch
+        self.config = config
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.processor = AutoProcessor.from_pretrained(config.model)
+        self.model = AutoModel.from_pretrained(config.model).to(self.device).eval()
+        self.prompts = {
+            "goalkeeper": config.goalkeeper_prompts,
+            "outfield": config.outfield_prompts,
+            "referee": config.referee_prompts,
+        }
+        self.flat_prompts = [prompt for name in self.CLASSES for prompt in self.prompts[name]]
+        self.slices: dict[str, slice] = {}
+        start = 0
+        for name in self.CLASSES:
+            end = start + len(self.prompts[name])
+            self.slices[name] = slice(start, end)
+            start = end
+
+    def score(self, crops: list[np.ndarray]) -> np.ndarray:
+        if not crops:
+            return np.empty((0, len(self.CLASSES)), dtype=np.float32)
+        batches: list[np.ndarray] = []
+        for start in range(0, len(crops), self.config.batch_size):
+            images = [cv2.cvtColor(crop, cv2.COLOR_BGR2RGB) for crop in crops[start:start + self.config.batch_size]]
+            inputs = self.processor(
+                text=self.flat_prompts, images=images, return_tensors="pt", padding=True
+            )
+            inputs = {name: value.to(self.device) for name, value in inputs.items()}
+            with self.torch.inference_mode():
+                output = self.model(**inputs)
+            prompt_probabilities = output.logits_per_image.softmax(dim=-1).cpu().numpy()
+            class_probabilities = np.stack(
+                [prompt_probabilities[:, self.slices[name]].sum(axis=1) for name in self.CLASSES],
+                axis=1,
+            )
+            class_probabilities /= np.maximum(class_probabilities.sum(axis=1, keepdims=True), 1e-9)
+            batches.append(class_probabilities.astype(np.float32))
+        return np.concatenate(batches, axis=0)
 
 
 def _box_distance(point: np.ndarray, box: np.ndarray) -> float:
@@ -104,6 +157,10 @@ class FeatureExtractor:
             raise RuntimeError("Install MediaPipe and Ultralytics before extracting features.") from exc
         self.mp = mp
         self.config = config
+        self.feature_names = GOALKEEPER_FEATURE_NAMES if config.role.enabled else FEATURE_NAMES
+        self.role_scorer = ZeroShotRoleScorer(config.role) if config.role.enabled else None
+        self.last_role_metadata: dict[str, object] | None = None
+        self.last_role_crops: list[np.ndarray] = []
         self.device = get_device(config.device)
         self.detector = YOLO(str(config.detector))
         options = mp.tasks.vision.PoseLandmarkerOptions(
@@ -318,7 +375,23 @@ class FeatureExtractor:
 
         vector = np.array([values[name] for name in FEATURE_NAMES], dtype=np.float32)
         quality = values["ball_valid"] * 2 + values["pose_valid_fraction"] + values["player_valid"]
-        return FrameResult(vector, quality, overlay), ball.center if ball is not None else previous_ball, selected_id
+        player_crop = None
+        if selected_person is not None:
+            x1, y1, x2, y2 = selected_person.box
+            box_w, box_h = x2 - x1, y2 - y1
+            margin = self.config.role.crop_margin
+            left = max(0, int(x1 - margin * box_w))
+            top = max(0, int(y1 - margin * box_h))
+            right = min(width, int(x2 + margin * box_w))
+            bottom = min(height, int(y2 + margin * box_h))
+            candidate = frame[top:bottom, left:right]
+            if candidate.shape[0] >= 24 and candidate.shape[1] >= 16:
+                player_crop = candidate.copy()
+        return (
+            FrameResult(vector, quality, overlay, player_crop),
+            ball.center if ball is not None else previous_ball,
+            selected_id,
+        )
 
     def extract(self, frame_paths: list[Path]) -> tuple[np.ndarray, list[np.ndarray], list[int]]:
         if not frame_paths:
@@ -337,7 +410,61 @@ class FeatureExtractor:
         matrix = np.stack([item.vector for item in results])
         self._add_motion(matrix)
         selected = self._temporal_indices(results, self.config.sequence_length)
-        return matrix[selected], [results[index].overlay for index in selected], selected
+        selected_matrix = matrix[selected]
+        selected_overlays = [results[index].overlay for index in selected]
+        self.last_role_metadata = None
+        self.last_role_crops = []
+        if self.role_scorer is not None:
+            valid_positions = [
+                position for position, index in enumerate(selected)
+                if results[index].player_crop is not None
+            ]
+            crops = [results[selected[position]].player_crop for position in valid_positions]
+            probabilities = self.role_scorer.score(crops)  # type: ignore[arg-type]
+            for crop, scores in zip(crops, probabilities):
+                annotated = crop.copy()
+                label = (
+                    f"G {scores[0]:.2f} O {scores[1]:.2f} R {scores[2]:.2f}"
+                )
+                cv2.putText(
+                    annotated, label, (5, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (20, 255, 255), 2, cv2.LINE_AA,
+                )
+                self.last_role_crops.append(annotated)
+            if len(probabilities):
+                aggregate = probabilities.mean(axis=0)
+                goalkeeper_score = float(aggregate[0])
+                runner_up = float(max(aggregate[1], aggregate[2]))
+            else:
+                aggregate = np.array([0.5, 0.25, 0.25], dtype=np.float32)
+                goalkeeper_score, runner_up = 0.5, 0.25
+            margin = goalkeeper_score - runner_up
+            uncertain = (
+                goalkeeper_score < self.config.role.confidence_threshold
+                or margin < self.config.role.margin_threshold
+            )
+            role_column = np.full((len(selected_matrix), 1), goalkeeper_score, dtype=np.float32)
+            selected_matrix = np.concatenate([selected_matrix, role_column], axis=1)
+            for overlay in selected_overlays:
+                cv2.putText(
+                    overlay, f"goalkeeper {goalkeeper_score:.2f}",
+                    (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 220, 40), 2, cv2.LINE_AA,
+                )
+            self.last_role_metadata = {
+                "model": self.config.role.model,
+                "classes": list(ZeroShotRoleScorer.CLASSES),
+                "aggregate_scores": {
+                    name: float(aggregate[index])
+                    for index, name in enumerate(ZeroShotRoleScorer.CLASSES)
+                },
+                "goalkeeper_margin": margin,
+                "uncertain": uncertain,
+                "valid_crop_count": len(crops),
+                "selected_frame_count": len(selected),
+                "per_crop_scores": probabilities.tolist(),
+                "valid_selected_positions": valid_positions,
+            }
+        return selected_matrix, selected_overlays, selected
 
     @staticmethod
     def _add_motion(matrix: np.ndarray) -> None:
@@ -429,8 +556,10 @@ def extract_manifest(
                 "example_id": str(row["example_id"]), "view_id": str(row["view_id"]),
                 "label": int(row["label"]), "domain": str(row["domain"]),
                 "source_group": str(row["source_group"]), "selected_frame_indices": selected,
-                "feature_names": FEATURE_NAMES,
+                "feature_names": extractor.feature_names,
             }
+            if extractor.last_role_metadata is not None:
+                metadata["player_role"] = extractor.last_role_metadata
             temporary = destination.with_suffix(".temporary.npz")
             np.savez_compressed(temporary, features=features, metadata=json.dumps(metadata))
             temporary.replace(destination)
@@ -439,6 +568,12 @@ def extract_manifest(
                 overlay = config.overlays_dir / domain_name / f"{_safe_name(str(row['example_id']))}_{row['view_id']}.jpg"
                 _contact_sheet(overlays, overlay)
                 overlay_counts[domain_name] = overlay_counts.get(domain_name, 0) + 1
+            if extractor.last_role_crops:
+                audit = (
+                    config.role_audits_dir / domain_name
+                    / f"{_safe_name(str(row['example_id']))}_{_safe_name(str(row['view_id']))}.jpg"
+                )
+                _contact_sheet(extractor.last_role_crops, audit)
 
 
 def main() -> None:

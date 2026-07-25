@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from training.data import aggregate_sequence
-from training.features import FEATURE_NAMES, FeatureExtractor
+from training.data import aggregate_sequence, load_views
+from training.features import FEATURE_NAMES, GOALKEEPER_FEATURE_NAMES, FeatureExtractor
 from training.gru import TemporalGRU
 from training.inference import resolve_frames
 from training.manifest import _imported_rows, sorted_frames
@@ -64,3 +64,52 @@ def test_resolve_frames_accepts_labeled_and_candidate_layouts(tmp_path: Path):
     assert len(resolve_frames(labeled)) == 1
     assert len(resolve_frames(candidate)) == 1
 
+
+def test_feature_loader_supports_legacy_and_goalkeeper_schemas(tmp_path: Path):
+    manifest = pd.DataFrame([{
+        "example_id": "example", "view_id": "primary", "label": 1,
+        "domain": "native", "fold": 0,
+    }])
+    manifest_path = tmp_path / "manifest.csv"
+    manifest.to_csv(manifest_path, index=False)
+    feature_path = tmp_path / "features" / "native" / "example" / "primary.npz"
+    feature_path.parent.mkdir(parents=True)
+    metadata = {"feature_names": GOALKEEPER_FEATURE_NAMES}
+    matrix = np.zeros((12, len(GOALKEEPER_FEATURE_NAMES)), dtype=np.float32)
+    matrix[:, -1] = 0.75
+    np.savez_compressed(feature_path, features=matrix, metadata=json.dumps(metadata))
+
+    current = load_views(manifest_path, tmp_path / "features")
+    assert current[0].features.shape == (12, 57)
+    assert current[0].feature_names[-1] == "goalkeeper_score"
+
+    projected = load_views(
+        manifest_path, tmp_path / "features", target_feature_names=FEATURE_NAMES
+    )
+    assert projected[0].features.shape == (12, 56)
+    assert projected[0].feature_names == tuple(FEATURE_NAMES)
+
+
+def test_feature_loader_rejects_missing_goalkeeper_feature(tmp_path: Path):
+    manifest = pd.DataFrame([{
+        "example_id": "example", "view_id": "primary", "label": 0,
+        "domain": "native", "fold": 0,
+    }])
+    manifest_path = tmp_path / "manifest.csv"
+    manifest.to_csv(manifest_path, index=False)
+    feature_path = tmp_path / "features" / "native" / "example" / "primary.npz"
+    feature_path.parent.mkdir(parents=True)
+    np.savez_compressed(
+        feature_path,
+        features=np.zeros((12, len(FEATURE_NAMES)), dtype=np.float32),
+        metadata=json.dumps({"feature_names": FEATURE_NAMES}),
+    )
+    try:
+        load_views(
+            manifest_path, tmp_path / "features",
+            target_feature_names=GOALKEEPER_FEATURE_NAMES,
+        )
+    except ValueError as exc:
+        assert "goalkeeper_score" in str(exc)
+    else:
+        raise AssertionError("Old artifacts must not silently invent goalkeeper scores")

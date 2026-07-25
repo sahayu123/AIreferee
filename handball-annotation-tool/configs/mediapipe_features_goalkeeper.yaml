@@ -1,0 +1,42 @@
+models:
+  detector: yolo11n.pt
+  mediapipe_pose: models/pose_landmarker_full.task
+  tracker: bytetrack.yaml
+  device: auto
+
+player_role:
+  enabled: true
+  model: openai/clip-vit-base-patch32
+  batch_size: 16
+  crop_margin: 0.05
+  confidence_threshold: 0.70
+  margin_threshold: 0.20
+  prompts:
+    goalkeeper:
+      - a professional soccer goalkeeper
+      - a soccer goalkeeper wearing goalkeeper gloves
+      - a soccer goalkeeper in a distinct goalkeeper uniform
+    outfield:
+      - an outfield soccer player
+      - a soccer defender midfielder or forward
+      - a soccer player wearing a normal team uniform
+    referee:
+      - a soccer referee officiating a match
+      - a football match official wearing a referee uniform
+
+extraction:
+  person_confidence: 0.25
+  ball_confidence: 0.10
+  pose_detection_confidence: 0.35
+  pose_presence_confidence: 0.35
+  pose_input_size: 512
+  crop_margin: 0.25
+  max_nearby_players: 3
+  sequence_length: 12
+  overlay_examples_per_domain: 20
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  features: artifacts/features_goalkeeper
+  overlays: artifacts/overlays_goalkeeper
+  role_audits: artifacts/role_audits_goalkeeper

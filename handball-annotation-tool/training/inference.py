@@ -10,7 +10,7 @@ import torch
 from handball_annotator.runtime import get_device
 
 from .config import load_feature_config, load_train_config, project_path
-from .features import FEATURE_NAMES, FeatureExtractor, _contact_sheet
+from .features import FeatureExtractor, _contact_sheet
 from .gru import TemporalGRU
 from .manifest import sorted_frames
 
@@ -45,19 +45,25 @@ def infer(
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    if list(checkpoint["feature_names"]) != FEATURE_NAMES:
-        raise ValueError("Checkpoint feature schema does not match the current extractor")
     model = TemporalGRU(**checkpoint["model_config"]).to(device)
     model.load_state_dict(checkpoint["model"])
     model.eval()
     frames = resolve_frames(input_path)
     with FeatureExtractor(feature_config) as extractor:
         features, overlays, selected = extractor.extract(frames)
-    normalized = (features - checkpoint["mean"]) / np.maximum(checkpoint["std"], 1e-6)
+        extracted_feature_names = extractor.feature_names
+        role_metadata = extractor.last_role_metadata
+    checkpoint_feature_names = [str(name) for name in checkpoint["feature_names"]]
+    missing_names = [name for name in checkpoint_feature_names if name not in extracted_feature_names]
+    if missing_names:
+        raise ValueError(f"Configured extractor is missing checkpoint features: {missing_names}")
+    model_indices = [extracted_feature_names.index(name) for name in checkpoint_feature_names]
+    model_features = features[:, model_indices]
+    normalized = (model_features - checkpoint["mean"]) / np.maximum(checkpoint["std"], 1e-6)
     with torch.no_grad():
         tensor = torch.from_numpy(normalized[None].astype(np.float32)).to(device)
         probability = float(torch.sigmoid(model(tensor))[0].cpu())
-    index = {name: FEATURE_NAMES.index(name) for name in FEATURE_NAMES}
+    index = {name: extracted_feature_names.index(name) for name in extracted_feature_names}
     ball_rate = float(features[:, index["ball_valid"]].mean())
     player_rate = float(features[:, index["player_valid"]].mean())
     pose_rate = float(features[:, index["pose_valid_fraction"]].mean())
@@ -77,6 +83,9 @@ def infer(
         "minimum_normalized_arm_distance": float(valid_distances.min()) if len(valid_distances) else None,
         "low_confidence_warning": low_confidence,
     }
+    if "goalkeeper_score" in index:
+        result["goalkeeper_score"] = float(features[:, index["goalkeeper_score"]].mean())
+        result["player_role"] = role_metadata
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     if overlay_path is not None:
@@ -103,4 +112,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

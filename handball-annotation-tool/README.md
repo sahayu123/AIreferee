@@ -143,6 +143,31 @@ python -m training.inference \
 
 Feature extraction must be audited before classifier results are trusted. Compare ball and pose detection rates across the handball and not-handball classes. A large quality gap means the classifier may learn detection quality rather than handball.
 
+### Zero-shot goalkeeper context
+
+An optional CLIP player-role scorer classifies the selected player crop as goalkeeper,
+outfield player, or referee without goalkeeper annotations. It averages prompt scores
+across the selected temporal frames and appends `goalkeeper_score` as feature 57.
+Existing 56-feature artifacts and checkpoints remain supported.
+
+```bash
+python -m training.features \
+    --config configs/mediapipe_features_goalkeeper.yaml \
+    --verbose
+
+python -m training.role_report
+
+python -m training.gru \
+    --config configs/temporal_classifier_goalkeeper.yaml \
+    --fold 0
+```
+
+The role report is written to `artifacts/reports_goalkeeper/player_roles.csv`.
+Per-example player-crop contact sheets with G/O/R scores are written to
+`artifacts/role_audits_goalkeeper`.
+Zero-shot similarity scores are not calibrated probabilities; review the report and
+overlays before using the score for automated decisions.
+
 ## Files and labels
 
 ```text

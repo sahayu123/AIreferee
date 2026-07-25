@@ -25,7 +25,14 @@ def evaluate_checkpoint(config_path: str | Path, checkpoint_path: Path, threshol
     model = TemporalGRU(**checkpoint["model_config"]).to(device)
     model.load_state_dict(checkpoint["model"])
     fold = int(checkpoint["fold"])
-    views = [view for view in load_views(config.manifest, config.features_dir) if view.fold == fold]
+    feature_names = tuple(str(name) for name in checkpoint["feature_names"])
+    if checkpoint["model_config"]["input_size"] != len(feature_names):
+        raise ValueError("Checkpoint input size does not match its feature schema")
+    views = [
+        view for view in load_views(
+            config.manifest, config.features_dir, target_feature_names=feature_names
+        ) if view.fold == fold
+    ]
     view_predictions = predict_views(
         model, views, checkpoint["mean"], checkpoint["std"], device, config.batch_size
     )
@@ -73,4 +80,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
