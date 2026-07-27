@@ -1,0 +1,63 @@
+base:
+  prtreid_config: configs/prtreid_goalkeeper.yaml
+  # The earlier PRTReID experiment remains available as an optional cross-check,
+  # but is disabled by default so it cannot veto the jersey/glove experiment.
+  use_prtreid_evidence: false
+
+pose:
+  model: models/pose_landmarker_full.task
+  input_size: 512
+  detection_confidence: 0.35
+  presence_confidence: 0.35
+  crop_margin: 0.25
+  wrist_confidence: 0.65
+  elbow_confidence: 0.50
+  shoulder_confidence: 0.40
+  minimum_forearm_ratio: 0.06
+  maximum_forearm_ratio: 0.30
+  minimum_upper_arm_ratio: 0.04
+  maximum_upper_arm_ratio: 0.30
+
+hands:
+  crop_side_ratio: 0.18
+  minimum_native_side: 32
+  maximum_native_side: 64
+  maximum_clipped_fraction: 0.25
+  minimum_blur_variance: 15.0
+  minimum_distinct_frames: 3
+  maximum_samples: 8
+
+jersey:
+  crop_top: 0.15
+  crop_bottom: 0.60
+  crop_left: 0.20
+  crop_right: 0.80
+  histogram_bins: 8
+  maximum_samples_per_track: 8
+  minimum_pixels: 100
+  minimum_track_frames: 5
+  minimum_comparison_tracks: 4
+  minimum_cluster_tracks: 2
+  cluster_candidates: 3
+  team_distance_scale: 0.35
+
+glove:
+  enabled: false
+  checkpoint: models/goalkeeper_glove_mobilenet_v3_small.pt
+  device: cpu
+  batch_size: 16
+
+decision:
+  # Jersey-only field-player calls are intentionally conservative.
+  not_goalkeeper_team_match: 0.90
+  not_goalkeeper_player_score: 0.60
+  goalkeeper_jersey_outlier: 0.55
+  goalkeeper_glove_probability: 0.75
+  goalkeeper_maximum_player_score: 0.25
+
+paths:
+  roles: artifacts/roles_jersey_glove
+  audits: artifacts/role_audits_jersey_glove
+  hand_crops: artifacts/hand_crops_jersey_glove
+  report: artifacts/reports_jersey_glove/player_roles.csv
+  logs: artifacts/logs_jersey_glove

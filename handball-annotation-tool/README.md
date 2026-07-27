@@ -205,6 +205,55 @@ no goalkeeper ground-truth labels, so the audit cannot honestly report
 goalkeeper accuracy. Treat `unknown` as a valid outcome and inspect the contact
 sheets before using the result.
 
+#### Jersey and wrist-localized glove experiment
+
+The newer conservative pipeline runs only after the unchanged GRU predicts
+handball. It associates that specific handball actor with a YOLO + ByteTrack
+person track, compares the actor's center-torso LAB color histogram with the two
+dominant field-team clusters, and optionally scores MediaPipe wrist crops with a
+local MobileNetV3-Small glove classifier.
+
+Jersey histograms use a center mask and consistent Hellinger geometry. Up to
+three candidate color groups are formed so a small referee/goalkeeper group can
+be discarded, and overlapping duplicate actor tracks are excluded before team
+clustering. Weak actor links or conflicting/missing evidence return `unknown`.
+The older PRTReID classifier is disabled by default and is only an optional
+cross-check.
+
+Run a resumable audit on one labeled handball clip:
+
+```bash
+python -m training.jersey_glove_audit \
+    --config configs/jersey_glove_goalkeeper.yaml \
+    --limit 1 \
+    --verbose
+```
+
+Remove `--limit 1` to audit all 86 labeled handball clips. JSON results are
+written under `artifacts/roles_jersey_glove`, visual actor/hand contact sheets
+under `artifacts/role_audits_jersey_glove`, individual accepted hand crops under
+`artifacts/hand_crops_jersey_glove`, and the CSV report to
+`artifacts/reports_jersey_glove/player_roles.csv`.
+
+Add this independent result to single-candidate inference:
+
+```bash
+python -m training.inference \
+    --input dataset/handball/CANDIDATE_ID \
+    --checkpoint artifacts/checkpoints/gru_fold0_best.pt \
+    --jersey-glove-config configs/jersey_glove_goalkeeper.yaml \
+    --output outputs/prediction_with_jersey_glove.json \
+    --overlay outputs/prediction_with_jersey_glove.jpg
+```
+
+The repository does not include a trained glove checkpoint. Therefore
+`glove.enabled` is `false` by default: the audit still extracts hand crops, but
+normal inference skips pose work and can return only a conservative
+`not_goalkeeper` or `unknown`. A `goalkeeper` result requires a compatible
+trained checkpoint at
+`models/goalkeeper_glove_mobilenet_v3_small.pt` and `glove.enabled: true`.
+Never enable it with random weights.
+
 The pinned PRTReID source is distributed under the Hippocratic License 3.0 and
 the SoccerNet checkpoint under CC BY 4.0. Review those terms before
 redistributing or deploying the model. The implementation uses its own thin
