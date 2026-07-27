@@ -1,5 +1,8 @@
 import json
+import os
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -12,6 +15,14 @@ from training.features import FEATURE_NAMES, FeatureExtractor
 from training.gru import TemporalGRU
 from training.inference import resolve_frames
 from training.manifest import _imported_rows, sorted_frames
+from training.prtreid_role import (
+    TrackObservation,
+    YOLOPersonTracker,
+    associate_handball_actor,
+    classify_actor_role,
+    load_prtreid_config,
+    prtreid_source_fingerprint,
+)
 from training.role_audit import _load_selected_features
 from training.role_detector import (
     RoleConfig,
@@ -55,6 +66,23 @@ def _role_config(tmp_path: Path, **overrides) -> RoleConfig:
     }
     values.update(overrides)
     return RoleConfig(**values)
+
+
+def _prtreid_config(tmp_path: Path, **overrides):
+    config = load_prtreid_config("configs/prtreid_goalkeeper.yaml")
+    values = {
+        "person_detector": tmp_path / "yolo11n.pt",
+        "prtreid_checkpoint": tmp_path / "prtreid.pth.tar",
+        "worker_command": ("fake-worker",),
+        "manifest": tmp_path / "manifest.csv",
+        "features_dir": tmp_path / "features",
+        "roles_dir": tmp_path / "roles",
+        "audits_dir": tmp_path / "audits",
+        "report": tmp_path / "report.csv",
+        "logs_dir": tmp_path / "logs",
+    }
+    values.update(overrides)
+    return replace(config, **values)
 
 
 def test_imported_manifest_uses_only_selected_auxiliary_label(tmp_path: Path):
@@ -292,3 +320,265 @@ def test_role_cache_tracks_feature_and_selected_frame_inputs(tmp_path: Path):
     changed = role_source_fingerprint(artifact, [frame], [0])
     assert changed != fingerprint
     assert not role_result_is_current(destination, config, changed)
+
+
+def test_prtreid_actor_association_prefers_original_arm_anchor(tmp_path: Path):
+    frame = tmp_path / "frame_0.jpg"
+    _image(frame)
+    tracks = {
+        7: [TrackObservation(0, frame, (10, 5, 60, 95), 0.7)],
+        9: [TrackObservation(0, frame, (100, 5, 155, 95), 0.99)],
+    }
+    metadata = {
+        "frames_before": 0,
+        "closest_arm": {"start": [25, 30], "end": [35, 50]},
+    }
+    association = associate_handball_actor(
+        tracks,
+        [(100, 200)],
+        np.zeros((1, len(FEATURE_NAMES)), dtype=np.float32),
+        [0],
+        metadata,
+        _prtreid_config(tmp_path),
+    )
+    assert association.track_id == 7
+    assert association.method == "closest_arm"
+    assert association.confident
+
+
+def test_prtreid_fallback_association_uses_saved_actor_boxes(tmp_path: Path):
+    frames = []
+    for frame_index in range(3):
+        frame = tmp_path / f"frame_{frame_index}.jpg"
+        cv2.imwrite(str(frame), np.zeros((100, 200, 3), dtype=np.uint8))
+        frames.append(frame)
+    tracks = {
+        3: [
+            TrackObservation(index, frames[index], (60, 20, 140, 80), 0.6)
+            for index in range(3)
+        ],
+        8: [
+            TrackObservation(index, frames[index], (150, 20, 195, 80), 0.99)
+            for index in range(3)
+        ],
+    }
+    features = np.zeros((3, len(FEATURE_NAMES)), dtype=np.float32)
+    feature_index = {name: FEATURE_NAMES.index(name) for name in FEATURE_NAMES}
+    features[:, feature_index["player_x"]] = 0.5
+    features[:, feature_index["player_y"]] = 0.5
+    features[:, feature_index["player_w"]] = 0.4
+    features[:, feature_index["player_h"]] = 0.6
+    features[:, feature_index["player_valid"]] = 1
+    association = associate_handball_actor(
+        tracks,
+        [(100, 200)] * 3,
+        features,
+        [0, 1, 2],
+        {},
+        _prtreid_config(tmp_path),
+    )
+    assert association.track_id == 3
+    assert association.confident
+
+
+def test_prtreid_classifies_every_actor_track_frame_but_abstains_on_weak_link(
+    tmp_path: Path,
+):
+    frame_paths = []
+    observations = []
+    for frame_index in range(4):
+        frame = tmp_path / f"frame_{frame_index}.jpg"
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+        image[10:90, 50:90] = (0, 0, 255)
+        cv2.imwrite(str(frame), image)
+        frame_paths.append(frame)
+        observations.append(
+            TrackObservation(frame_index, frame, (50, 10, 90, 90), 0.9)
+        )
+
+    class FakeTracker:
+        def track(self, frame_paths):
+            return {4: observations}
+
+    class FakeWorker:
+        def __init__(self):
+            self.crops = []
+
+        def predict(self, crops):
+            self.crops.extend(crops)
+            return [
+                {
+                    "frame_path": crop["frame_path"],
+                    "bbox": crop["bbox"],
+                    "role_probabilities": {
+                        "ball": 0.01,
+                        "goalkeeper": 0.95,
+                        "other": 0.01,
+                        "player": 0.02,
+                        "referee": 0.01,
+                    },
+                    "predicted_role": "goalkeeper",
+                    "confidence": 0.95,
+                    "margin": 0.93,
+                }
+                for crop in crops
+            ]
+
+    features = np.zeros((2, len(FEATURE_NAMES)), dtype=np.float32)
+    feature_index = {name: FEATURE_NAMES.index(name) for name in FEATURE_NAMES}
+    features[:, feature_index["player_x"]] = 0.5
+    features[:, feature_index["player_y"]] = 0.5
+    features[:, feature_index["player_w"]] = 0.4
+    features[:, feature_index["player_h"]] = 0.8
+    features[:, feature_index["player_valid"]] = 1
+    worker = FakeWorker()
+    result = classify_actor_role(
+        frame_paths,
+        features,
+        [0, 1],
+        {},
+        _prtreid_config(
+            tmp_path,
+            minimum_anchor_coverage=0.20,
+            minimum_association_score=0.80,
+        ),
+        tracker=FakeTracker(),
+        worker=worker,
+    )
+    assert len(worker.crops) == 4
+    assert len({Path(crop["frame_path"]).name for crop in worker.crops}) == 4
+    assert result["tracks"][0]["aggregate"]["is_goalkeeper"] is True
+    assert result["association"]["confident"] is False
+    assert result["predicted_role"] == "unknown"
+    assert result["is_goalkeeper"] is None
+
+
+def test_prtreid_cache_fingerprint_covers_unselected_frames(tmp_path: Path):
+    artifact = tmp_path / "features.npz"
+    artifact.write_bytes(b"base features")
+    selected = tmp_path / "frame_0.jpg"
+    unselected = tmp_path / "frame_1.jpg"
+    selected.write_bytes(b"selected")
+    unselected.write_bytes(b"AAAAAAAAAA")
+    first = prtreid_source_fingerprint(
+        artifact, [selected, unselected], [0]
+    )
+    original_stat = unselected.stat()
+    unselected.write_bytes(b"BBBBBBBBBB")
+    os.utime(
+        unselected,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    second = prtreid_source_fingerprint(
+        artifact, [selected, unselected], [0]
+    )
+    assert first != second
+
+
+def test_prtreid_fallback_marks_equal_crossing_tracks_ambiguous(tmp_path: Path):
+    frames = []
+    for frame_index in range(3):
+        frame = tmp_path / f"frame_{frame_index}.jpg"
+        cv2.imwrite(str(frame), np.zeros((100, 100, 3), dtype=np.uint8))
+        frames.append(frame)
+    tracks = {
+        track_id: [
+            TrackObservation(index, frames[index], (30, 10, 70, 90), 0.9)
+            for index in range(3)
+        ]
+        for track_id in (2, 5)
+    }
+    features = np.zeros((3, len(FEATURE_NAMES)), dtype=np.float32)
+    feature_index = {name: FEATURE_NAMES.index(name) for name in FEATURE_NAMES}
+    features[:, feature_index["player_x"]] = 0.5
+    features[:, feature_index["player_y"]] = 0.5
+    features[:, feature_index["player_w"]] = 0.4
+    features[:, feature_index["player_h"]] = 0.8
+    features[:, feature_index["player_valid"]] = 1
+    association = associate_handball_actor(
+        tracks,
+        [(100, 100)] * 3,
+        features,
+        [0, 1, 2],
+        {},
+        _prtreid_config(tmp_path, minimum_anchor_votes=3),
+    )
+    assert association.margin == pytest.approx(0.0)
+    assert association.conflicting
+    assert not association.confident
+
+
+def test_prtreid_three_frame_fragment_cannot_decide_41_frame_clip(tmp_path: Path):
+    frame_paths = []
+    for frame_index in range(41):
+        frame = tmp_path / f"frame_{frame_index}.jpg"
+        cv2.imwrite(str(frame), np.zeros((100, 100, 3), dtype=np.uint8))
+        frame_paths.append(frame)
+    observations = [
+        TrackObservation(index, frame_paths[index], (30, 10, 70, 90), 0.9)
+        for index in range(3)
+    ]
+
+    class FragmentTracker:
+        def track(self, frame_paths):
+            return {6: observations}
+
+    class GoalkeeperWorker:
+        def predict(self, crops):
+            return [
+                {
+                    "frame_path": crop["frame_path"],
+                    "bbox": crop["bbox"],
+                    "role_probabilities": {
+                        "ball": 0.01,
+                        "goalkeeper": 0.95,
+                        "other": 0.01,
+                        "player": 0.02,
+                        "referee": 0.01,
+                    },
+                    "predicted_role": "goalkeeper",
+                    "confidence": 0.95,
+                    "margin": 0.93,
+                }
+                for crop in crops
+            ]
+
+    features = np.zeros((1, len(FEATURE_NAMES)), dtype=np.float32)
+    metadata = {
+        "frames_before": 1,
+        "closest_arm": {"start": [40, 40], "end": [45, 45]},
+    }
+    result = classify_actor_role(
+        frame_paths,
+        features,
+        [1],
+        metadata,
+        _prtreid_config(tmp_path),
+        tracker=FragmentTracker(),
+        worker=GoalkeeperWorker(),
+    )
+    aggregate = result["tracks"][0]["aggregate"]
+    assert aggregate["prediction_frames"] == 3
+    assert aggregate["coverage"] == pytest.approx(3 / 41)
+    assert aggregate["is_goalkeeper"] is None
+    assert result["association"]["confident"] is True
+    assert result["is_goalkeeper"] is None
+
+
+def test_prtreid_tracker_reset_reuses_predictor_without_callback_growth():
+    class FakeByteTracker:
+        def __init__(self):
+            self.reset_calls = 0
+
+        def reset(self):
+            self.reset_calls += 1
+
+    byte_trackers = [FakeByteTracker(), FakeByteTracker()]
+    predictor = SimpleNamespace(trackers=byte_trackers, vid_path=["old", "old"])
+    tracker = YOLOPersonTracker.__new__(YOLOPersonTracker)
+    tracker.model = SimpleNamespace(predictor=predictor)
+    original_predictor = tracker.model.predictor
+    tracker._reset_for_clip()
+    assert tracker.model.predictor is original_predictor
+    assert predictor.vid_path == [None, None]
+    assert [item.reset_calls for item in byte_trackers] == [1, 1]

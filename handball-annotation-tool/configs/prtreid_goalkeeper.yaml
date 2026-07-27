@@ -1,0 +1,54 @@
+models:
+  person_detector: yolo11n.pt
+  prtreid_checkpoint: models/prtreid-soccernet-baseline.pth.tar
+  device: auto
+
+tracking:
+  tracker: bytetrack.yaml
+  confidence: 0.25
+  image_size: 640
+  minimum_track_frames: 3
+
+worker:
+  command:
+    - /home/cosmos32/anaconda3/envs/aireferee-prtreid/bin/python
+    - -u
+    - training/prtreid_worker.py
+    - --device
+    - cpu
+  timeout_seconds: 180
+  batch_size: 16
+
+association:
+  center_box_margin: 0.15
+  minimum_anchor_coverage: 0.50
+  minimum_anchor_iou: 0.15
+  minimum_anchor_votes: 3
+  minimum_score: 0.35
+  minimum_margin: 0.10
+
+aggregation:
+  minimum_predictions: 3
+  minimum_coverage: 0.25
+  role_threshold: 0.60
+  goalkeeper_threshold: 0.70
+  minimum_role_margin: 0.15
+  color_weight: 0.10
+  color_activation: 0.40
+
+jersey_color:
+  crop_top: 0.15
+  crop_bottom: 0.60
+  crop_left: 0.20
+  crop_right: 0.80
+  minimum_pixels: 50
+  minimum_comparison_tracks: 4
+  outlier_distance: 35.0
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  features: artifacts/features
+  roles: artifacts/roles_prtreid
+  audits: artifacts/role_audits_prtreid
+  report: artifacts/reports_prtreid/player_roles.csv
+  logs: artifacts/logs_prtreid

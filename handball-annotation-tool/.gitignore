@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.pt
+*.pth.tar
 *.task
 artifacts/features/**
 artifacts/overlays/**
@@ -12,6 +13,10 @@ artifacts/roles_hf/**
 artifacts/role_audits_hf/**
 artifacts/reports_hf/**
 artifacts/logs_hf/**
+artifacts/roles_prtreid/**
+artifacts/role_audits_prtreid/**
+artifacts/reports_prtreid/**
+artifacts/logs_prtreid/**
 .pytest_cache/
 .DS_Store
 workspace/uploads/**

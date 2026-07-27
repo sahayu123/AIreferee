@@ -145,31 +145,47 @@ Feature extraction must be audited before classifier results are trusted. Compar
 
 ### Independent goalkeeper detection
 
-The optional football-role detector uses the pretrained
-`gianpaj/football-players-detection-1` YOLOv8x checkpoint from Hugging Face.
-It classifies the player already selected by the handball pipeline as
-`goalkeeper`, `player`, `referee`, or `unknown`. Role results are aggregated
-across the existing 12 selected frames and remain separate from the 56-feature
-GRU, so enabling role detection does not change or retrain the handball model.
+The PRTReID experiment uses the pretrained SoccerNet player-role model to
+classify full player tracks as `goalkeeper`, `player`, `referee`, or `unknown`.
+It reruns YOLO + ByteTrack over every available clip frame, scores every
+retained person track, associates the handball actor using the original
+center-frame arm location when available (otherwise the stored 12-frame actor
+boxes), and uses jersey-colour difference only as secondary evidence. It
+abstains when actor association or role evidence is weak.
 
-Download the checkpoint:
+PRTReID requires Python 3.9 and PyTorch 1.13, which are incompatible with the
+main Python 3.13 environment on this server. Create the isolated worker
+environment once:
 
 ```bash
-python -m training.download_models --with-role-detector
+conda create -n aireferee-prtreid python=3.9 -y
+conda run -n aireferee-prtreid \
+    python -m pip install --no-deps -r requirements-prtreid.txt
 ```
 
-Run a 20-incident resumable audit before processing the full manifest:
+The checked-in configuration points to
+`/home/cosmos32/anaconda3/envs/aireferee-prtreid/bin/python`. Change the first
+entry under `worker.command` in `configs/prtreid_goalkeeper.yaml` if the
+environment lives elsewhere.
+
+Download and checksum-verify the official checkpoint:
 
 ```bash
-python -m training.role_audit \
-    --config configs/hf_goalkeeper.yaml \
-    --limit 20 \
+python -m training.download_models --with-prtreid
+```
+
+Run a resumable 25-incident audit first:
+
+```bash
+python -m training.prtreid_audit \
+    --config configs/prtreid_goalkeeper.yaml \
+    --limit 25 \
     --verbose
 ```
 
-Results are written under `artifacts/roles_hf`, contact sheets under
-`artifacts/role_audits_hf`, and the summary CSV to
-`artifacts/reports_hf/player_roles.csv`. Remove `--limit 20` to process all
+Results are written under `artifacts/roles_prtreid`, contact sheets under
+`artifacts/role_audits_prtreid`, and the summary CSV to
+`artifacts/reports_prtreid/player_roles.csv`. Remove `--limit 25` to process all
 manifest examples.
 
 Add independent role output to single-candidate inference:
@@ -178,14 +194,25 @@ Add independent role output to single-candidate inference:
 python -m training.inference \
     --input dataset/handball/CANDIDATE_ID \
     --checkpoint artifacts/checkpoints/gru_fold0_best.pt \
-    --role-config configs/hf_goalkeeper.yaml \
+    --prtreid-config configs/prtreid_goalkeeper.yaml \
     --output outputs/prediction_with_role.json \
     --overlay outputs/prediction_with_role.jpg
 ```
 
-The role checkpoint is AGPL-3.0 licensed and was evaluated on a small,
-single-source football dataset. Treat `unknown` as a valid result and inspect
-the contact sheets before using goalkeeper status in downstream decisions.
+This role output is deliberately separate from the 56-feature GRU: enabling it
+does not retrain or change the handball probability. The dataset currently has
+no goalkeeper ground-truth labels, so the audit cannot honestly report
+goalkeeper accuracy. Treat `unknown` as a valid outcome and inspect the contact
+sheets before using the result.
+
+The pinned PRTReID source is distributed under the Hippocratic License 3.0 and
+the SoccerNet checkpoint under CC BY 4.0. Review those terms before
+redistributing or deploying the model. The implementation uses its own thin
+worker and does not copy the GPL-3.0 SoccerNet game-state wrapper.
+
+The earlier 12-frame Hugging Face YOLO role experiment remains available for
+comparison with `training.role_audit` and `configs/hf_goalkeeper.yaml`, but it
+does not provide full-track identity consistency.
 
 ## Files and labels
 
