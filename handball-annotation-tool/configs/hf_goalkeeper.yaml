@@ -1,0 +1,22 @@
+model:
+  checkpoint: models/football_roles_yolov8x.pt
+  device: auto
+  confidence: 0.20
+  image_size: 640
+
+association:
+  minimum_actor_coverage: 0.20
+
+aggregation:
+  minimum_matches: 3
+  minimum_coverage: 0.25
+  role_vote_threshold: 0.55
+  goalkeeper_vote_threshold: 0.70
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  features: artifacts/features
+  roles: artifacts/roles_hf
+  audits: artifacts/role_audits_hf
+  report: artifacts/reports_hf/player_roles.csv
+  logs: artifacts/logs_hf

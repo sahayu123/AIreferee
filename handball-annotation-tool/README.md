@@ -143,6 +143,50 @@ python -m training.inference \
 
 Feature extraction must be audited before classifier results are trusted. Compare ball and pose detection rates across the handball and not-handball classes. A large quality gap means the classifier may learn detection quality rather than handball.
 
+### Independent goalkeeper detection
+
+The optional football-role detector uses the pretrained
+`gianpaj/football-players-detection-1` YOLOv8x checkpoint from Hugging Face.
+It classifies the player already selected by the handball pipeline as
+`goalkeeper`, `player`, `referee`, or `unknown`. Role results are aggregated
+across the existing 12 selected frames and remain separate from the 56-feature
+GRU, so enabling role detection does not change or retrain the handball model.
+
+Download the checkpoint:
+
+```bash
+python -m training.download_models --with-role-detector
+```
+
+Run a 20-incident resumable audit before processing the full manifest:
+
+```bash
+python -m training.role_audit \
+    --config configs/hf_goalkeeper.yaml \
+    --limit 20 \
+    --verbose
+```
+
+Results are written under `artifacts/roles_hf`, contact sheets under
+`artifacts/role_audits_hf`, and the summary CSV to
+`artifacts/reports_hf/player_roles.csv`. Remove `--limit 20` to process all
+manifest examples.
+
+Add independent role output to single-candidate inference:
+
+```bash
+python -m training.inference \
+    --input dataset/handball/CANDIDATE_ID \
+    --checkpoint artifacts/checkpoints/gru_fold0_best.pt \
+    --role-config configs/hf_goalkeeper.yaml \
+    --output outputs/prediction_with_role.json \
+    --overlay outputs/prediction_with_role.jpg
+```
+
+The role checkpoint is AGPL-3.0 licensed and was evaluated on a small,
+single-source football dataset. Treat `unknown` as a valid result and inspect
+the contact sheets before using goalkeeper status in downstream decisions.
+
 ## Files and labels
 
 ```text

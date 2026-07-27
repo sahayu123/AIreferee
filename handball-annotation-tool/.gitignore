@@ -8,6 +8,10 @@ artifacts/overlays/**
 artifacts/checkpoints/**
 artifacts/logs/**
 artifacts/reports/**
+artifacts/roles_hf/**
+artifacts/role_audits_hf/**
+artifacts/reports_hf/**
+artifacts/logs_hf/**
 .pytest_cache/
 .DS_Store
 workspace/uploads/**

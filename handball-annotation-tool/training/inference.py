@@ -13,6 +13,11 @@ from .config import load_feature_config, load_train_config, project_path
 from .features import FEATURE_NAMES, FeatureExtractor, _contact_sheet
 from .gru import TemporalGRU
 from .manifest import sorted_frames
+from .role_detector import (
+    FootballRoleDetector,
+    classify_selected_actor,
+    load_role_config,
+)
 
 
 def resolve_frames(input_path: Path) -> list[Path]:
@@ -38,6 +43,7 @@ def infer(
     output_path: Path,
     overlay_path: Path | None = None,
     threshold: float = 0.5,
+    role_config_path: str | Path | None = None,
 ) -> dict[str, object]:
     feature_config = load_feature_config(feature_config_path)
     train_config = load_train_config(train_config_path)
@@ -77,6 +83,25 @@ def infer(
         "minimum_normalized_arm_distance": float(valid_distances.min()) if len(valid_distances) else None,
         "low_confidence_warning": low_confidence,
     }
+    if role_config_path is not None:
+        role_config = load_role_config(role_config_path)
+        role_detector = FootballRoleDetector(role_config)
+        role_result, overlays = classify_selected_actor(
+            role_detector,
+            frames,
+            features,
+            selected,
+            role_config,
+            base_overlays=overlays,
+        )
+        result.update({
+            "actor_role": role_result["predicted_role"],
+            "is_goalkeeper": role_result["is_goalkeeper"],
+            "goalkeeper_score": role_result["goalkeeper_score"],
+            "role_confidence": role_result["role_confidence"],
+            "role_frame_coverage": role_result["coverage"],
+            "role_detection": role_result,
+        })
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     if overlay_path is not None:
@@ -93,14 +118,18 @@ def main() -> None:
     parser.add_argument("--output", default="outputs/mediapipe_prediction.json", type=Path)
     parser.add_argument("--overlay", type=Path)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--role-config",
+        help="Optional independent goalkeeper/player/referee detector configuration.",
+    )
     args = parser.parse_args()
     result = infer(
         project_path(args.input), project_path(args.checkpoint), args.feature_config, args.train_config,
         project_path(args.output), project_path(args.overlay) if args.overlay else None, args.threshold,
+        args.role_config,
     )
     print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
     main()
-
