@@ -1,0 +1,28 @@
+visual_extraction:
+  device: auto
+  crop_margin: 0.35
+  batch_size: 32
+
+training:
+  device: auto
+  seed: 42
+  folds: 5
+  fold: 0
+  epochs: 60
+  batch_size: 16
+  hidden_size: 64
+  layers: 2
+  visual_projection_size: 32
+  dropout: 0.35
+  learning_rate: 0.001
+  weight_decay: 0.001
+  patience: 10
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  base_features: artifacts/features
+  visual_features: artifacts/features_visual_mobilenet
+  visual_checkpoints: artifacts/checkpoints_visual_fusion
+  visual_reports: artifacts/reports_visual_fusion
+  visual_logs: artifacts/logs_visual_fusion
+  baseline_reports: artifacts/reports

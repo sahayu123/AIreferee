@@ -123,6 +123,49 @@ Repeat folds `0` through `4`, then summarize:
 python -m training.evaluate --summarize
 ```
 
+### Experimental visual-feature fusion
+
+The visual-fusion experiment keeps the 56 YOLO/pose features and adds actual
+appearance information. For each of the same 12 selected moments, it crops the
+detected player together with the detected ball, runs a frozen
+ImageNet-pretrained MobileNetV3-Small, and stores a 576-value embedding. A
+small visual projection is pooled and concatenated with the existing GRU
+representation.
+
+Extract the resumable visual cache:
+
+```bash
+python -m training.visual_features \
+    --config configs/visual_fusion.yaml
+```
+
+Train one fold or run the complete five-fold comparison:
+
+```bash
+python -m training.visual_fusion \
+    --config configs/visual_fusion.yaml \
+    --fold 0
+
+python -m training.visual_fusion \
+    --config configs/visual_fusion.yaml \
+    --all-folds
+```
+
+The all-fold command writes predictions, per-fold histories, and a direct
+comparison with the existing GRU under `artifacts/reports_visual_fusion`.
+Generated embeddings and checkpoints are ignored by Git.
+
+The first 286-clip experiment did not beat the existing GRU at threshold 0.5:
+
+| Model | Accuracy | Precision | Recall | F1 | PR-AUC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Existing 56-feature GRU | 79.37% | 64.84% | 68.60% | 66.67% | 72.22% |
+| MobileNet visual fusion | 78.67% | 62.89% | 70.93% | 66.67% | 70.72% |
+
+The visual branch found two additional handballs but introduced four
+additional false alarms, leaving two more total errors. It therefore remains
+an isolated experiment and is not used by normal inference.
+
 Resume an interrupted training run:
 
 ```bash
