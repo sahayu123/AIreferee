@@ -32,6 +32,10 @@ artifacts/features_visual_mobilenet/**
 artifacts/checkpoints_visual_fusion/**
 artifacts/reports_visual_fusion/**
 artifacts/logs_visual_fusion/**
+artifacts/features_motion_flow/**
+artifacts/checkpoints_motion_flow/**
+artifacts/reports_motion_flow/**
+artifacts/logs_motion_flow/**
 artifacts/features_goalkeeper/**
 artifacts/features_seq24/**
 artifacts/features_seq41/**

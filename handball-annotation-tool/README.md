@@ -490,6 +490,32 @@ The earlier 12-frame Hugging Face YOLO role experiment remains available for
 comparison with `training.role_audit` and `configs/hf_goalkeeper.yaml`, but it
 does not provide full-track identity consistency.
 
+## Motion-enhanced GRU experiment
+
+The isolated `trajectory-optical-flow-experiment` adds 84 engineered motion
+channels to the original 56 features while preserving the same 12-frame GRU
+architecture and split definitions. The added channels describe ball
+velocity/acceleration/curvature, lower-frame bounce proxies, ball-to-arm
+distance and relative motion, wrist motion, camera-compensated DIS optical
+flow, and sparse ball-arm contact evidence. They are experimental signals, not
+ground-truth contact or bounce labels.
+
+Generate the `12 x 140` tensors and train all five folds:
+
+```bash
+python -m training.motion_features --config configs/motion_gru.yaml
+python -m training.motion_gru --config configs/motion_gru.yaml --all-folds
+```
+
+The first five-fold run on 286 clips produced 212 correct and 74 incorrect
+predictions: 74.13% accuracy, 56.00% precision, 65.12% recall, and 60.22% F1.
+The original 56-feature GRU produced 227 correct and 59 incorrect predictions:
+79.37% accuracy and 66.67% F1. Therefore this branch records a useful negative
+experiment and does not replace the original GRU. Generated tensors,
+checkpoints, and reports live under `artifacts/features_motion_flow`,
+`artifacts/checkpoints_motion_flow`, and `artifacts/reports_motion_flow` and
+are ignored by Git.
+
 ## Files and labels
 
 ```text

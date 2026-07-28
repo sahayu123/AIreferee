@@ -1,0 +1,28 @@
+motion_extraction:
+  flow_width: 320
+  flow_preset: fast
+  arm_mask_fraction: 0.08
+  contact_margin: 0.05
+
+training:
+  device: auto
+  seed: 42
+  folds: 5
+  fold: 0
+  epochs: 60
+  batch_size: 16
+  hidden_size: 64
+  layers: 2
+  dropout: 0.25
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 10
+
+paths:
+  manifest: artifacts/manifests/dataset.csv
+  base_features: artifacts/features
+  motion_features: artifacts/features_motion_flow
+  motion_checkpoints: artifacts/checkpoints_motion_flow
+  motion_reports: artifacts/reports_motion_flow
+  motion_logs: artifacts/logs_motion_flow
+  baseline_reports: artifacts/reports
