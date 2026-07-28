@@ -22,6 +22,12 @@ artifacts/role_audits_jersey_glove/**
 artifacts/hand_crops_jersey_glove/**
 artifacts/reports_jersey_glove/**
 artifacts/logs_jersey_glove/**
+artifacts/roles_combined_oof/**
+artifacts/roles_combined_supervised/**
+artifacts/roles_supervised_goalkeeper/**
+artifacts/reports_supervised_goalkeeper/**
+artifacts/reports_goalkeeper_classifier/**
+artifacts/reviews_goalkeeper_classifier/**
 .pytest_cache/
 .DS_Store
 workspace/uploads/**

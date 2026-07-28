@@ -25,6 +25,18 @@ from .role_detector import (
     classify_selected_actor,
     load_role_config,
 )
+from .supervised_goalkeeper import (
+    classify_supervised_goalkeeper,
+    load_supervised_goalkeeper_config,
+)
+
+_GOALKEEPER_STATUSES = {
+    "goalkeeper",
+    "not_goalkeeper",
+    "unknown",
+    "unavailable",
+    "not_evaluated",
+}
 
 
 def resolve_frames(input_path: Path) -> list[Path]:
@@ -148,6 +160,104 @@ def _add_jersey_glove_overlays(
     return updated
 
 
+def _sanitize_goalkeeper_result(
+    value: object,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise TypeError("Goalkeeper analysis must return an object")
+    result = dict(value)
+    status = result.get("status")
+    if status not in _GOALKEEPER_STATUSES:
+        raise ValueError(f"Invalid goalkeeper status: {status!r}")
+    is_goalkeeper = result.get("is_goalkeeper")
+    if status == "goalkeeper" and is_goalkeeper is not True:
+        raise ValueError(
+            "A goalkeeper status requires is_goalkeeper=true"
+        )
+    if status == "not_goalkeeper" and is_goalkeeper is not False:
+        raise ValueError(
+            "A not_goalkeeper status requires is_goalkeeper=false"
+        )
+    if status not in {"goalkeeper", "not_goalkeeper"}:
+        result["is_goalkeeper"] = None
+    actor_observations = result.get("actor_observations", [])
+    if not isinstance(actor_observations, list):
+        raise TypeError("actor_observations must be a list")
+    result["actor_observations"] = actor_observations
+    result.setdefault("evaluated", status not in {"unavailable", "not_evaluated"})
+    result.setdefault("goalkeeper_evidence_score", None)
+    result.setdefault("reason", None)
+    return result
+
+
+def _skipped_goalkeeper_result() -> dict[str, object]:
+    return {
+        "evaluated": False,
+        "status": "not_evaluated",
+        "is_goalkeeper": None,
+        "goalkeeper_evidence_score": None,
+        "reason": "raw_not_handball_gate",
+        "actor_observations": [],
+    }
+
+
+def _apply_goalkeeper_decision(
+    result: dict[str, object],
+    raw_predicted_label: str,
+    goalkeeper_result: dict[str, object],
+    *,
+    backend: str,
+    invoked: bool,
+) -> None:
+    """Publish both the hierarchical event and final binary foul decision."""
+    goalkeeper_status = str(goalkeeper_result["status"])
+    raw_handball = raw_predicted_label == "handball"
+    goalkeeper_veto = raw_handball and goalkeeper_status == "goalkeeper"
+    result["predicted_label"] = (
+        "not_handball" if goalkeeper_veto else raw_predicted_label
+    )
+    if not raw_handball:
+        final_reason = "raw_not_handball_goalkeeper_skipped"
+        combined_event_label = "not_handball"
+        actor_role = None
+    elif goalkeeper_status == "goalkeeper":
+        final_reason = "confirmed_goalkeeper_veto"
+        combined_event_label = "handball_goalkeeper"
+        actor_role = "goalkeeper"
+    elif goalkeeper_status == "not_goalkeeper":
+        final_reason = "raw_handball_confirmed_outfield"
+        combined_event_label = "handball_outfield"
+        actor_role = "outfield"
+    else:
+        final_reason = (
+            f"raw_handball_preserved_{goalkeeper_status}"
+        )
+        combined_event_label = "handball_actor_unknown"
+        actor_role = "unknown"
+    result.update(
+        {
+            "raw_handball_detected": raw_handball,
+            "combined_event_label": combined_event_label,
+            "handball_actor_role": actor_role,
+            "goalkeeper_status": goalkeeper_status,
+            "is_goalkeeper": goalkeeper_result["is_goalkeeper"],
+            "goalkeeper_evidence_score": goalkeeper_result[
+                "goalkeeper_evidence_score"
+            ],
+            "goalkeeper_analysis_required": raw_handball,
+            "goalkeeper_analysis_invoked": bool(invoked),
+            "goalkeeper_analysis_completed": bool(
+                goalkeeper_result.get("evaluated", False)
+            ),
+            "goalkeeper_veto_applied": goalkeeper_veto,
+            "handball_suppressed_by_goalkeeper": goalkeeper_veto,
+            "final_decision_reason": final_reason,
+            "goalkeeper_detection_backend": backend,
+            "goalkeeper_analysis": goalkeeper_result,
+        }
+    )
+
+
 def infer(
     input_path: Path,
     checkpoint_path: Path,
@@ -159,11 +269,13 @@ def infer(
     role_config_path: str | Path | None = None,
     prtreid_config_path: str | Path | None = None,
     jersey_glove_config_path: str | Path | None = None,
+    supervised_goalkeeper_config_path: str | Path | None = None,
 ) -> dict[str, object]:
     role_options = (
         role_config_path,
         prtreid_config_path,
         jersey_glove_config_path,
+        supervised_goalkeeper_config_path,
     )
     if sum(value is not None for value in role_options) > 1:
         raise ValueError(
@@ -194,11 +306,16 @@ def infer(
     low_confidence = ball_rate < 0.25 or player_rate < 0.5 or pose_rate < 0.35
     valid_distances = features[:, index["arm_min_distance"]]
     valid_distances = valid_distances[valid_distances > 0]
+    raw_predicted_label = (
+        "handball" if probability >= threshold else "not_handball"
+    )
     result: dict[str, object] = {
         "input": str(input_path),
         "checkpoint": str(checkpoint_path),
         "handball_probability": probability,
-        "predicted_label": "handball" if probability >= threshold else "not_handball",
+        "raw_handball_probability": probability,
+        "raw_predicted_label": raw_predicted_label,
+        "predicted_label": raw_predicted_label,
         "threshold": threshold,
         "selected_frame_indices": selected,
         "ball_detection_rate": ball_rate,
@@ -245,37 +362,35 @@ def infer(
             "role_detection": role_result,
         })
     if jersey_glove_config_path is not None:
-        if probability < threshold:
-            goalkeeper_result = {
-                "evaluated": False,
-                "status": "not_evaluated",
-                "is_goalkeeper": None,
-                "goalkeeper_evidence_score": None,
-                "reason": "handball_below_threshold",
-                "handball_probability_observed": probability,
-                "handball_threshold_observed": threshold,
-                "actor_observations": [],
-            }
+        invoked = raw_predicted_label == "handball"
+        if not invoked:
+            goalkeeper_result = _skipped_goalkeeper_result()
         else:
-            jersey_glove_config = load_jersey_glove_config(
-                jersey_glove_config_path
-            )
             try:
-                goalkeeper_result = classify_goalkeeper_after_handball(
-                    frames,
-                    features,
-                    selected,
-                    _candidate_metadata(input_path, frames),
-                    probability,
-                    threshold,
-                    jersey_glove_config,
+                jersey_glove_config = load_jersey_glove_config(
+                    jersey_glove_config_path
                 )
-            except (OSError, RuntimeError) as exc:
+                goalkeeper_result = _sanitize_goalkeeper_result(
+                    classify_goalkeeper_after_handball(
+                        frames,
+                        features,
+                        selected,
+                        _candidate_metadata(input_path, frames),
+                        probability,
+                        threshold,
+                        jersey_glove_config,
+                        force_evaluation=True,
+                    )
+                )
+                overlays = _add_jersey_glove_overlays(
+                    overlays, selected, goalkeeper_result
+                )
+            except Exception as exc:
                 warnings.warn(
                     (
-                        "Goalkeeper post-processing is unavailable; the "
-                        f"handball result is unchanged: {type(exc).__name__}: "
-                        f"{exc}"
+                        "Goalkeeper analysis is unavailable; the raw "
+                        f"handball result is preserved: "
+                        f"{type(exc).__name__}: {exc}"
                     ),
                     RuntimeWarning,
                     stacklevel=2,
@@ -285,26 +400,65 @@ def infer(
                     "status": "unavailable",
                     "is_goalkeeper": None,
                     "goalkeeper_evidence_score": None,
-                    "reason": "goalkeeper_postprocessing_error",
+                    "reason": "goalkeeper_analysis_error",
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                     "actor_observations": [],
                 }
-        overlays = _add_jersey_glove_overlays(
-            overlays, selected, goalkeeper_result
+        _apply_goalkeeper_decision(
+            result,
+            raw_predicted_label,
+            goalkeeper_result,
+            backend="jersey_glove_actor_track",
+            invoked=invoked,
         )
-        result.update(
-            {
-                "goalkeeper_status": goalkeeper_result["status"],
-                "is_goalkeeper": goalkeeper_result["is_goalkeeper"],
-                "goalkeeper_evidence_score": goalkeeper_result[
-                    "goalkeeper_evidence_score"
-                ],
-                "goalkeeper_detection_backend": (
-                    "jersey_glove_actor_track"
-                ),
-                "goalkeeper_analysis": goalkeeper_result,
-            }
+    if supervised_goalkeeper_config_path is not None:
+        invoked = raw_predicted_label == "handball"
+        if not invoked:
+            goalkeeper_result = _skipped_goalkeeper_result()
+        else:
+            try:
+                supervised_config = load_supervised_goalkeeper_config(
+                    supervised_goalkeeper_config_path
+                )
+                goalkeeper_result = _sanitize_goalkeeper_result(
+                    classify_supervised_goalkeeper(
+                        frames,
+                        features,
+                        selected,
+                        _candidate_metadata(input_path, frames),
+                        supervised_config,
+                    )
+                )
+                overlays = _add_jersey_glove_overlays(
+                    overlays, selected, goalkeeper_result
+                )
+            except Exception as exc:
+                warnings.warn(
+                    (
+                        "Supervised goalkeeper analysis is unavailable; the "
+                        f"raw handball result is preserved: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                goalkeeper_result = {
+                    "evaluated": False,
+                    "status": "unavailable",
+                    "is_goalkeeper": None,
+                    "goalkeeper_evidence_score": None,
+                    "reason": "supervised_goalkeeper_error",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "actor_observations": [],
+                }
+        _apply_goalkeeper_decision(
+            result,
+            raw_predicted_label,
+            goalkeeper_result,
+            backend="supervised_player_crop_actor_track",
+            invoked=invoked,
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -334,15 +488,51 @@ def main() -> None:
     role_group.add_argument(
         "--jersey-glove-config",
         help=(
-            "Optional post-handball actor goalkeeper evidence using team "
-            "jerseys and wrist-localized gloves."
+            "Optional pre-decision actor goalkeeper evidence using team "
+            "jerseys and wrist-localized gloves; a confirmed goalkeeper "
+            "vetoes a raw handball prediction."
+        ),
+    )
+    role_group.add_argument(
+        "--supervised-goalkeeper-config",
+        help=(
+            "Pre-decision actor tracking plus the trained full-player "
+            "goalkeeper image classifier."
+        ),
+    )
+    role_group.add_argument(
+        "--no-goalkeeper-filter",
+        action="store_true",
+        help=(
+            "Return the raw GRU decision without running a goalkeeper filter."
         ),
     )
     args = parser.parse_args()
+    if not any(
+        (
+            args.role_config,
+            args.prtreid_config,
+            args.jersey_glove_config,
+            args.supervised_goalkeeper_config,
+            args.no_goalkeeper_filter,
+        )
+    ):
+        supervised_checkpoint = project_path(
+            "artifacts/checkpoints/goalkeeper_mobilenet_v3_best.pt"
+        )
+        if supervised_checkpoint.is_file():
+            args.supervised_goalkeeper_config = (
+                "configs/supervised_goalkeeper.yaml"
+            )
+        else:
+            args.jersey_glove_config = (
+                "configs/jersey_glove_goalkeeper.yaml"
+            )
     result = infer(
         project_path(args.input), project_path(args.checkpoint), args.feature_config, args.train_config,
         project_path(args.output), project_path(args.overlay) if args.overlay else None, args.threshold,
         args.role_config, args.prtreid_config, args.jersey_glove_config,
+        args.supervised_goalkeeper_config,
     )
     console_result = dict(result)
     role_details = console_result.get("role_detection")

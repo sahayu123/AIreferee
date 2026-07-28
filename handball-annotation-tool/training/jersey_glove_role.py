@@ -1,8 +1,9 @@
 """Independent goalkeeper evidence from team jerseys and wrist-localized gloves.
 
-This module intentionally runs *after* the existing handball GRU.  It reuses
-the full-frame YOLO + ByteTrack implementation and actor association from the
-PRTReID experiment, but it never modifies the handball probability.
+This module reuses the full-frame YOLO + ByteTrack implementation and actor
+association from the PRTReID experiment.  It never modifies the raw handball
+probability; callers may use a confirmed goalkeeper status as a final decision
+veto.
 
 The glove classifier is optional.  When no trained local checkpoint is
 configured, glove evidence is represented as unavailable (``None``), never as
@@ -1324,8 +1325,9 @@ def classify_goalkeeper_after_handball(
     role_worker: RoleWorker | None = None,
     hand_extractor: HandExtractor | None = None,
     glove_model: GloveProbabilityModel | None = None,
+    force_evaluation: bool = False,
 ) -> dict[str, Any]:
-    """Classify the actor only after the unchanged GRU reports handball."""
+    """Classify the actor, optionally regardless of the raw GRU decision."""
 
     if not frame_paths:
         raise ValueError("Cannot classify a goalkeeper for an empty clip")
@@ -1333,7 +1335,7 @@ def classify_goalkeeper_after_handball(
         raise ValueError("handball_probability must be finite")
     if not 0 <= handball_threshold <= 1:
         raise ValueError("handball_threshold must be between 0 and 1")
-    if handball_probability < handball_threshold:
+    if handball_probability < handball_threshold and not force_evaluation:
         return {
             "schema_version": SCHEMA_VERSION,
             "config_fingerprint": jersey_glove_config_fingerprint(config),

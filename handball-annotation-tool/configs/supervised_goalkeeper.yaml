@@ -1,0 +1,26 @@
+base:
+  prtreid_config: configs/prtreid_goalkeeper.yaml
+
+classifier:
+  checkpoint: artifacts/checkpoints/goalkeeper_mobilenet_v3_best.pt
+  device: cpu
+  batch_size: 16
+
+crops:
+  margin: 0.15
+  minimum_player_height: 100
+  minimum_blur_variance: 15.0
+  maximum_samples: 8
+  minimum_samples: 3
+
+decision:
+  # The trained checkpoint stores validation-tuned defaults. Set either value
+  # to null to use the checkpoint value.
+  not_goalkeeper_threshold: null
+  goalkeeper_threshold: null
+  minimum_frame_agreement: 0.60
+
+paths:
+  roles: artifacts/roles_supervised_goalkeeper
+  reports: artifacts/reports_supervised_goalkeeper
+

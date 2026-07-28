@@ -145,6 +145,163 @@ Feature extraction must be audited before classifier results are trusted. Compar
 
 ### Independent goalkeeper detection
 
+#### Supervised full-player goalkeeper classifier
+
+This is the recommended goalkeeper pipeline. It fine-tunes a pretrained
+MobileNetV3-Small on reviewed full-player crops, then applies that classifier
+to multiple frames from the handball actor's ByteTrack track. Gloves, jersey
+appearance, sleeves, and pose are learned together; no glove-only labels are
+required.
+
+Organize the incoming full photographs by class and, ideally, by match:
+
+```text
+incoming_goalkeeper_photos/
+  match_001/
+    image_001.jpg
+    image_002.jpg
+incoming_not_goalkeeper_photos/
+  match_001/
+    image_003.jpg
+  match_002/
+    image_004.jpg
+```
+
+Matching subdirectory names are treated as the same source group and can never
+cross training/validation/test folds. This prevents nearly identical match
+backgrounds and uniforms from leaking into test results.
+
+Detect people and generate 15%-margin player crops:
+
+```bash
+python -m training.goalkeeper_dataset \
+    --goalkeeper-source /path/to/incoming_goalkeeper_photos \
+    --not-goalkeeper-source /path/to/incoming_not_goalkeeper_photos \
+    --output-root workspace/goalkeeper_classifier \
+    --detector yolo11n.pt
+```
+
+The command prints one live line per source image. A source containing exactly
+one usable person is safely auto-labeled from its class folder. Every person
+from a multi-player source remains unlabeled until reviewed:
+
+```bash
+streamlit run goalkeeper_review_app.py -- \
+    --manifest workspace/goalkeeper_classifier/candidates.csv
+```
+
+The app reviews one source photograph at a time. It overlays a number on every
+YOLO person box and shows all matching player crops together. Label crops
+individually as `goalkeeper`, `outfield`, or `reject / uncertain`, or use the
+fast actions to mark every crop as outfield or select one goalkeeper and mark
+the remaining people as outfield. Progress is saved atomically to the
+candidate manifest, and the first edit creates
+`candidates.csv.before_manual_review` as a recoverable backup. The default
+queue contains only photographs that still need review, so reopening the app
+resumes unfinished work. Training ignores blank and uncertain rows.
+
+When running on an SSH host, expose the app on port 8502:
+
+```bash
+streamlit run goalkeeper_review_app.py \
+    --server.address 0.0.0.0 \
+    --server.port 8502 -- \
+    --manifest workspace/goalkeeper_classifier/candidates.csv
+```
+
+Forward port 8502 in the VS Code **Ports** panel, then open the forwarded URL.
+
+Train and evaluate the classifier:
+
+```bash
+python -m training.goalkeeper_train \
+    --config configs/goalkeeper_classifier.yaml
+```
+
+Training prints every epoch's loss, precision, recall, and F1. It uses
+source-group-separated folds, a frozen-backbone warmup followed by fine-tuning,
+weighted sampling, early stopping, and validation-tuned abstaining thresholds.
+The final untouched fold produces accuracy, precision, recall, F1, PR-AUC, a
+confusion matrix, a per-image predictions CSV, and copies of every mistake.
+Artifacts are written to:
+
+```text
+artifacts/checkpoints/goalkeeper_mobilenet_v3_best.pt
+artifacts/reports_goalkeeper_classifier/history.csv
+artifacts/reports_goalkeeper_classifier/metrics.json
+artifacts/reports_goalkeeper_classifier/test_predictions.csv
+artifacts/reviews_goalkeeper_classifier/
+```
+
+After the checkpoint exists, run the complete handball pipeline with the
+supervised goalkeeper model:
+
+```bash
+python -m training.inference \
+    --input dataset/handball/CANDIDATE_ID \
+    --checkpoint artifacts/checkpoints/gru_fold0_best.pt \
+    --supervised-goalkeeper-config configs/supervised_goalkeeper.yaml \
+    --output outputs/prediction_with_supervised_goalkeeper.json \
+    --overlay outputs/prediction_with_supervised_goalkeeper.jpg
+```
+
+Once that trained checkpoint exists, the command-line inference entry point
+also selects the supervised configuration automatically when no role option is
+given. Supplying `--supervised-goalkeeper-config` explicitly is recommended for
+recorded experiments because it makes the chosen backend obvious in the
+command itself.
+
+The GRU runs first. A raw `not_handball` result skips goalkeeper analysis
+entirely. For a raw `handball`, the actor is associated with a YOLO + ByteTrack
+identity, up to eight sharp full-player crops are classified, and their
+probabilities are aggregated using the median plus a minimum frame-agreement
+rule. Fewer than three usable crops, uncertain association, conflicting
+probabilities, or an unavailable checkpoint produce `unknown` and preserve the
+raw GRU decision. Only a consistent, high-confidence `goalkeeper` result can
+veto a raw handball prediction. JSON output includes the explicit hierarchical
+event label: `not_handball`, `handball_goalkeeper`, `handball_outfield`, or
+`handball_actor_unknown`.
+
+The source-photo test set measures the image classifier. Honest
+goalkeeper-specific metrics on the existing 286 clips additionally require
+goalkeeper labels for the involved actor in those clips.
+
+After training, evaluate all clips while gating the supervised role stage to
+raw-positive clips:
+
+```bash
+python -m training.combined_evaluate \
+    --supervised-goalkeeper-config configs/supervised_goalkeeper.yaml \
+    --role-cache-dir artifacts/roles_combined_supervised_gated \
+    --output-csv artifacts/reports/combined_supervised_gated_predictions.csv \
+    --output-json artifacts/reports/combined_supervised_gated_metrics.json
+```
+
+This produces raw-versus-final precision, recall, F1, binary clip-label
+accuracy, confusion matrices, goalkeeper veto count, skipped/known/unknown/error
+coverage, and one auditable row per clip. The role cache is checkpoint-aware
+and resumable. Because the clip manifest does not label the actor as goalkeeper
+or outfield, it cannot provide honest three-class actor-role accuracy.
+
+Review every final mistake and goalkeeper-veto decision in a local UI:
+
+```bash
+streamlit run combined_mistake_review_app.py \
+    --server.address 0.0.0.0 \
+    --server.port 8503 -- \
+    --predictions artifacts/reports/combined_supervised_gated_predictions.csv \
+    --audit artifacts/reports/combined_supervised_gated_audit.csv
+```
+
+Forward port 8503 in the VS Code **Ports** panel and open its forwarded URL.
+The default queue contains final combined mistakes. Filters separate false
+positives, false negatives, base-model misses, surviving false alarms,
+goalkeeper vetoes that helped, and goalkeeper vetoes that hurt. Each clip has
+an animated preview, an exact-frame scrubber, base-model player/ball boxes,
+the actor track and exact crops used by the goalkeeper classifier, and an
+independent root-cause audit form. Reviews are saved atomically to the audit
+CSV; the prediction report is never changed.
+
 The PRTReID experiment uses the pretrained SoccerNet player-role model to
 classify full player tracks as `goalkeeper`, `player`, `referee`, or `unknown`.
 It reruns YOLO + ByteTrack over every available clip frame, scores every
@@ -207,11 +364,14 @@ sheets before using the result.
 
 #### Jersey and wrist-localized glove experiment
 
-The newer conservative pipeline runs only after the unchanged GRU predicts
-handball. It associates that specific handball actor with a YOLO + ByteTrack
-person track, compares the actor's center-torso LAB color histogram with the two
-dominant field-team clusters, and optionally scores MediaPipe wrist crops with a
-local MobileNetV3-Small glove classifier.
+The conservative pipeline now runs before the final handball label. It
+preserves the GRU probability and raw label, associates the specific handball
+actor with a YOLO + ByteTrack person track, compares the actor's center-torso
+LAB color histogram with the two dominant field-team clusters, and optionally
+scores MediaPipe wrist crops with a local MobileNetV3-Small glove classifier.
+A validated `goalkeeper` result vetoes a raw handball label; `not_goalkeeper`,
+`unknown`, or an unavailable role stage preserves the raw decision. It never
+manufactures a fused probability.
 
 Jersey histograms use a center mask and consistent Hellinger geometry. Up to
 three candidate color groups are formed so a small referee/goalkeeper group can
@@ -246,6 +406,13 @@ python -m training.inference \
     --overlay outputs/prediction_with_jersey_glove.jpg
 ```
 
+The command-line inference entry point uses
+`configs/jersey_glove_goalkeeper.yaml` by default when no legacy role option is
+selected. Pass `--no-goalkeeper-filter` only when a raw-GRU-only diagnostic is
+explicitly required. This project currently applies the requested
+goalkeeper-veto policy without penalty-area geometry; that is an experimental
+label policy, not the full football handball law.
+
 The repository does not include a trained glove checkpoint. Therefore
 `glove.enabled` is `false` by default: the audit still extracts hand crops, but
 normal inference skips pose work and can return only a conservative
@@ -253,6 +420,23 @@ normal inference skips pose work and can return only a conservative
 trained checkpoint at
 `models/goalkeeper_glove_mobilenet_v3_small.pt` and `glove.enabled: true`.
 Never enable it with random weights.
+
+Run the complete five-fold gated evaluation on every manifest clip:
+
+```bash
+python -m training.combined_evaluate
+```
+
+The command prints one live line per clip, skips role inference for raw
+negatives, caches resumable raw-positive role results under
+`artifacts/roles_combined_oof`, writes per-clip raw and final decisions to
+`artifacts/reports/combined_oof_predictions.csv`, and writes baseline/combined
+precision, recall, F1, accuracy, confusion matrices, status coverage, and
+fingerprints to `artifacts/reports/combined_oof_metrics.json`. The current
+training loop selected each best epoch using that same outer fold, so these are
+practical out-of-fold metrics but mildly optimistic—not a pristine nested-test
+estimate. The manifest also has no goalkeeper ground-truth column, so the
+command cannot honestly report goalkeeper-only accuracy.
 
 The pinned PRTReID source is distributed under the Hippocratic License 3.0 and
 the SoccerNet checkpoint under CC BY 4.0. Review those terms before

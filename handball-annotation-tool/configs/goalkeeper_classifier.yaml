@@ -1,0 +1,32 @@
+data:
+  candidates_manifest: workspace/goalkeeper_classifier/candidates.csv
+  training_manifest: workspace/goalkeeper_classifier/training_manifest.csv
+  folds: 5
+  validation_fold: 0
+  test_fold: 1
+  seed: 42
+
+model:
+  architecture: mobilenet_v3_small
+  pretrained: true
+  input_size: 224
+
+training:
+  device: auto
+  batch_size: 16
+  epochs: 35
+  freeze_backbone_epochs: 4
+  head_learning_rate: 0.001
+  backbone_learning_rate: 0.0001
+  weight_decay: 0.0001
+  patience: 7
+  num_workers: 0
+  target_class_precision: 0.85
+
+paths:
+  checkpoint: artifacts/checkpoints/goalkeeper_mobilenet_v3_best.pt
+  history: artifacts/reports_goalkeeper_classifier/history.csv
+  metrics: artifacts/reports_goalkeeper_classifier/metrics.json
+  predictions: artifacts/reports_goalkeeper_classifier/test_predictions.csv
+  mistakes: artifacts/reviews_goalkeeper_classifier
+
