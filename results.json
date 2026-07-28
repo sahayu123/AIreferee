@@ -1,0 +1,28 @@
+{
+  "test_accuracy": 0.9397163120567376,
+  "test_balanced_accuracy": 0.7348484848484849,
+  "test_precision": 0.9660377358490566,
+  "test_macro_f1": 0.7410748042128004,
+  "val_macro_f1": 0.7670647206250922,
+  "threshold": 0.75,
+  "best_params": {
+    "smote": "ADASYN(sampling_strategy=0.5)",
+    "rf__n_estimators": 500,
+    "rf__min_samples_leaf": 4,
+    "rf__max_features": "sqrt",
+    "rf__max_depth": 10,
+    "rf__class_weight": "balanced"
+  },
+  "num_cnn_features": 512,
+  "num_pose_features": 14,
+  "num_actions_train": 2798,
+  "num_actions_val": 395,
+  "num_actions_test": 282,
+  "num_clips_total": 7944,
+  "fusion_dim": 1052,
+  "fusion_method": "mean_concat_max",
+  "main_model_input_dim": 1061,
+  "card_clf_trained": true,
+  "num_card_train_actions": 2446,
+  "num_card_test_actions": 260
+}

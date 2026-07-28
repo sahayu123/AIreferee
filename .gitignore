@@ -26,3 +26,17 @@ __pycache__/
 .env.*
 !.env.example
 .DS_Store
+
+# Editor/tool local config
+.vscode/
+.claude/
+
+# Virtual environments
+.venv*/
+
+# Downloaded pretrained models and generated caches
+mediapipe_models/
+*.pkl
+*.npz
+*.log
+
