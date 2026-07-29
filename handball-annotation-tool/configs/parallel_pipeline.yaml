@@ -1,0 +1,41 @@
+execution:
+  # Both specialists remain independent and begin after one shared incident
+  # window has been decoded.
+  mode: parallel
+  window_frames: 41
+  incident_time_seconds: null
+  output_root: artifacts/parallel_runs
+
+decision:
+  handball_high: 0.70
+  handball_low: 0.30
+  foul_high: 0.70
+  foul_low: 0.30
+  minimum_quality: 0.20
+
+handball:
+  feature_config: configs/mediapipe_features.yaml
+  train_config: configs/temporal_classifier.yaml
+  threshold: 0.50
+  checkpoints:
+    - artifacts/checkpoints/gru_fold0_best.pt
+    - artifacts/checkpoints/gru_fold1_best.pt
+    - artifacts/checkpoints/gru_fold2_best.pt
+    - artifacts/checkpoints/gru_fold3_best.pt
+    - artifacts/checkpoints/gru_fold4_best.pt
+
+general_foul:
+  # This tracked notebook is the authoritative, handball-free foul backend.
+  notebook: ../AI Referee Foul Checker Prototype (1).ipynb
+  runtime_root: .runtime/general_foul
+  yolo_weights: yolo11n.pt
+  pose_model: models/pose_landmarker_full.task
+  skeleton_weights: https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/rtmw-x_simcc-cocktail13_pt-ucoco_270e-384x288-0949e3a9_20230925.zip
+  tracker: botsort.yaml
+  frame_threshold: 0.60
+  minimum_seconds: 0.12
+  # Values above 1 disable the notebook's risky single-frame override.
+  high_confidence_override: 1.01
+  max_frames: null
+  make_video: true
+  require_roboflow_key: true

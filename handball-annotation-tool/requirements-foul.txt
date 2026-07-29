@@ -1,0 +1,11 @@
+# Additional dependencies for the independent main-branch general-foul model.
+# Install the normal requirements.txt first.
+av>=12.0
+onnxruntime-gpu>=1.18
+rtmlib>=0.0.13
+scipy>=1.13
+transformers>=4.57
+accelerate>=0.33
+
+# MoGe-2 is loaded only when the metric 3D contact gate is reached:
+git+https://github.com/microsoft/MoGe.git

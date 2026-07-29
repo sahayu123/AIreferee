@@ -516,6 +516,105 @@ checkpoints, and reports live under `artifacts/features_motion_flow`,
 `artifacts/checkpoints_motion_flow`, and `artifacts/reports_motion_flow` and
 are ignored by Git.
 
+## Parallel handball and general-foul application
+
+The `parallel-handball-foul-integration` branch adds one coordinator around two
+independent specialists:
+
+```text
+one uploaded incident
+        |
+shared 41-frame window
+        |
+        +-- original 12 x 56 feature, five-fold GRU ensemble --> P(handball)
+        |
+        +-- main v2 general-foul prototype -------------------> P(other foul)
+        |
+four-way decision: handball / other foul / no foul / needs review
+```
+
+The models start concurrently after video preparation. Their internal
+features, checkpoints, and predictions remain separate; only their normalized
+results enter `combined_pipeline/decision.py`. A high handball score owns the
+`handball` decision, while a low handball score plus a high general-foul score
+produces `other_foul`. Uncertain, low-quality, unavailable, or conflicting
+evidence is sent to `needs_review`.
+
+The handball specialist extracts features once and then applies each of
+`gru_fold0_best.pt` through `gru_fold4_best.pt` with that fold checkpoint's own
+normalization. This ensemble is appropriate for a new unseen incident, but it
+must not be evaluated on the cross-validation training corpus as if all five
+predictions were out of fold. The uploaded video is reduced to the same
+41-frame incident window used during handball training. Set `--incident-time`
+for a longer video; otherwise the midpoint is used.
+
+The tracked main-branch notebook is the authoritative general-foul source:
+`../AI Referee Foul Checker Prototype (1).ipynb`. Its nine `%%writefile`
+modules are validated and materialized under the ignored
+`.runtime/general_foul/airef` directory. The integration disables its
+single-frame 97% override by setting the threshold to `1.01`.
+
+Install the extra general-foul dependencies:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements-foul.txt
+```
+
+The main notebook does not publish its three trained checkpoints. Copy the
+original files from its Colab/Drive run into these exact locations:
+
+```text
+.runtime/general_foul/runs/image_foul_mlp_v408.pt
+.runtime/general_foul/runs/clean_tackle/resnet18_mixed.pt
+.runtime/general_foul/runs/contact/resnet_contact.pt
+```
+
+The hosted detector also requires:
+
+```bash
+export ROBOFLOW_API_KEY="your-private-key"
+```
+
+Check readiness without running a video:
+
+```bash
+python -m combined_pipeline.cli \
+  --config configs/parallel_pipeline.yaml \
+  --input README.md \
+  --preflight
+```
+
+Run both models on an incident:
+
+```bash
+python -m combined_pipeline.cli \
+  --config configs/parallel_pipeline.yaml \
+  --input /path/to/incident.mp4 \
+  --incident-time 2.40 \
+  --output-dir artifacts/parallel_runs/my_incident
+```
+
+Launch the inspection UI:
+
+```bash
+streamlit run parallel_referee_app.py \
+  --server.address 0.0.0.0 \
+  --server.port 8503
+```
+
+The UI displays the final decision, both independent probabilities, every GRU
+fold score, detection quality, handball evidence sheet, general-foul timeline,
+annotated output, errors, and the complete JSON record. When one specialist
+cannot run, the result is explicitly marked `partial`; the missing model is
+never silently imputed.
+
+The current server has all handball assets and passed a real 41-frame smoke
+test (five-fold probabilities `0.999, 0.687, 0.984, 0.986, 0.997`, ensemble
+`0.930`). Full general-foul inference remains unavailable until its three
+private checkpoints, RTMLib/ONNX/MoGe dependencies, and Roboflow credential are
+provided. This is an artifact/credential limitation, not a hidden fallback.
+
 ## Files and labels
 
 ```text

@@ -52,6 +52,8 @@ artifacts/archive/**
 artifacts/reviews/**
 workspace/goalkeeper_classifier/**
 outputs/**
+.runtime/**
+artifacts/parallel_runs/**
 .pytest_cache/
 .DS_Store
 workspace/uploads/**
