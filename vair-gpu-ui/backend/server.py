@@ -42,10 +42,22 @@ SOURCE_ROOT = resolve_source_root()
 CHECKPOINT_ROOT = Path(
     os.environ.get("VAIR_CHECKPOINT_ROOT", APP_ROOT / "models")
 ).expanduser().resolve()
+GRU_PROJECT_ROOT = Path(
+    os.environ.get(
+        "VAIR_GRU_PROJECT_ROOT",
+        SOURCE_ROOT.parent / "AIreferee-handball" / "handball-annotation-tool",
+    )
+).expanduser().resolve()
 NOTEBOOK = SOURCE_ROOT / NOTEBOOK_NAME
-HANDBALL_PROJECT_ADAPTER = HERE / "handball_project_detector.py"
 RUNTIME_ROOT = HERE / ".runtime"
 ARTIFACT_ROOT = HERE / ".artifacts"
+GRU_WINDOW_FRAMES = 41
+GRU_FEATURE_CONFIG = GRU_PROJECT_ROOT / "configs/mediapipe_features.yaml"
+GRU_TRAIN_CONFIG = GRU_PROJECT_ROOT / "configs/temporal_classifier.yaml"
+GRU_CHECKPOINTS = tuple(
+    GRU_PROJECT_ROOT / f"artifacts/checkpoints/gru_fold{fold}_best.pt"
+    for fold in range(5)
+)
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 WEIGHTS = {
     "image_foul_mlp_v408.pt": CHECKPOINT_ROOT / "image_foul_mlp_v408.pt",
@@ -214,19 +226,51 @@ def run_handball_video(
     job_id: str,
     media_path: Path,
     output_dir: Path,
+    incident_time_seconds: float,
 ):
-    from .handball_project_detector import analyze_handball_project
+    if str(GRU_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(GRU_PROJECT_ROOT))
+
+    from combined_pipeline.handball import (
+        HandballSpecialist,
+        HandballSpecialistConfig,
+    )
+    from combined_pipeline.video import prepare_video
 
     update_job(
         job_id,
-        stage="Running Handball Detection Project ball/arm geometry",
+        stage="Preparing the 41-frame window for the five-fold handball GRU",
         progress=87,
     )
-    result = analyze_handball_project(
+    context = prepare_video(
         media_path,
-        output_dir / "handball-project",
+        output_dir / "handball-gru-input",
+        max_frames=GRU_WINDOW_FRAMES,
+        incident_time_seconds=incident_time_seconds,
+    )
+    specialist = HandballSpecialist(
+        HandballSpecialistConfig(
+            feature_config=GRU_FEATURE_CONFIG,
+            train_config=GRU_TRAIN_CONFIG,
+            checkpoints=GRU_CHECKPOINTS,
+            threshold=0.50,
+        )
+    )
+    preflight = specialist.preflight()
+    if not preflight.available:
+        raise RuntimeError(
+            "Five-fold handball GRU is unavailable: "
+            + "; ".join(preflight.issues)
+        )
+    result = specialist.predict(
+        context,
+        output_dir / "handball-gru",
         handball_progress_callback(job_id),
     )
+    if result.probability is None or len(result.fold_probabilities) != 5:
+        raise RuntimeError(
+            "Five-fold handball GRU did not return all fold probabilities"
+        )
     return result
 
 
@@ -243,7 +287,7 @@ def combine_video_verdict(general_result: Any, handball_result: Any):
         general_probability = float(general_result.confidence)
     handball_probability = float(handball_result.probability)
     if handball_result.predicted_label == "handball" and handball_probability >= 0.70:
-        return "handball", handball_probability, "ball-arm collision and arm-angle rule confirmed handball", False
+        return "handball", handball_probability, "five-fold GRU ensemble exceeded the handball threshold", False
     if general_label == "foul" and general_probability >= 0.70:
         return "other_foul", general_probability, "general-foul specialist exceeded threshold", False
     if (
@@ -259,7 +303,7 @@ def combine_video_verdict(general_result: Any, handball_result: Any):
         1.0 - handball_probability,
         1.0 - general_probability,
     )
-    return "needs_review", confidence, "handball geometry and general-foul evidence were uncertain", False
+    return "needs_review", confidence, "five-fold GRU and general-foul evidence were uncertain", False
 
 
 def image_analysis(job_id: str, media_path: Path, api_key: str) -> dict[str, Any]:
@@ -362,6 +406,7 @@ def video_analysis(job_id: str, media_path: Path, api_key: str) -> dict[str, Any
         job_id,
         media_path,
         output_dir,
+        incident_time_seconds=float(result.peak_time),
     )
     final_label, final_confidence, decision_reason, partial = combine_video_verdict(
         result,
@@ -378,20 +423,10 @@ def video_analysis(job_id: str, media_path: Path, api_key: str) -> dict[str, Any
 
     if final_label == "handball":
         final_verdict = "FOUL — HANDBALL"
-        if getattr(handball, "proximity_override", False):
-            distance = float(handball.minimum_normalized_arm_distance or 0.0)
-            threshold = float(handball.proximity_threshold)
-            reason = (
-                f"automatic handball: ball-to-{handball.handball_part}-arm "
-                f"gap was {distance:.2%}, below the {threshold:.2%} "
-                "high-confidence proximity threshold"
-            )
-        else:
-            reason = (
-                f"ball intersected the {handball.handball_part} arm at "
-                f"{float(handball.handball_angle or 0):.0f}°; the supplied "
-                "Handball Detection Project angle rule awards handball"
-            )
+        reason = (
+            "the trained five-fold GRU ensemble predicted handball at "
+            f"{float(handball.probability):.1%}"
+        )
     elif final_label == "other_foul":
         final_verdict = result.verdict
     elif final_label == "no_foul":
@@ -447,30 +482,27 @@ def video_analysis(job_id: str, media_path: Path, api_key: str) -> dict[str, Any
             "handball_fold_probabilities": dict(
                 getattr(handball, "fold_probabilities", {})
             ),
-            "handball_frames": int(getattr(handball, "candidate_frames", 0)),
-            "handball_hit_hand": bool(getattr(handball, "hit_hand", False)),
-            "handball_part": getattr(handball, "handball_part", None),
-            "handball_angle": getattr(handball, "handball_angle", None),
-            "handball_proximity_override": bool(
-                getattr(handball, "proximity_override", False)
+            "handball_frames": len(
+                getattr(handball, "selected_frame_indices", ())
             ),
-            "handball_proximity_threshold": float(
-                getattr(handball, "proximity_threshold", 0.04)
-            ),
+            "handball_hit_hand": False,
+            "handball_part": None,
+            "handball_angle": None,
+            "handball_proximity_override": False,
+            "handball_proximity_threshold": None,
             "combined_decision_reason": decision_reason,
         },
         "report": (
-            f"{result.report}\n\nHANDBALL DETECTION PROJECT\n"
+            f"{result.report}\n\nFIVE-FOLD HANDBALL GRU\n"
             f"prediction: {getattr(handball, 'predicted_label', 'unavailable')}\n"
             f"probability: {handball_probability}\n"
             f"quality: {getattr(handball, 'quality', 0.0)}\n"
-            f"ball hit arm: {getattr(handball, 'hit_hand', False)}\n"
-            f"arm: {getattr(handball, 'handball_part', None)}\n"
-            f"arm angle: {getattr(handball, 'handball_angle', None)}\n"
-            f"proximity override: {getattr(handball, 'proximity_override', False)}\n"
-            f"normalized arm gap: "
+            f"fold probabilities: "
+            f"{dict(getattr(handball, 'fold_probabilities', {}))}\n"
+            f"selected frames: "
+            f"{list(getattr(handball, 'selected_frame_indices', ()))}\n"
+            f"minimum normalized arm distance: "
             f"{getattr(handball, 'minimum_normalized_arm_distance', None)}\n"
-            f"direction-change frames: {getattr(handball, 'candidate_frames', 0)}\n"
             f"combined decision: {decision_reason}"
         ),
     }
@@ -529,18 +561,19 @@ def health() -> dict[str, Any]:
         "source_notebook": NOTEBOOK.name,
         "checkpoints": {name: path.exists() for name, path in WEIGHTS.items()},
         "handball": {
-            "available": HANDBALL_PROJECT_ADAPTER.exists(),
-            "source": "nadimra/handball-detection algorithm, modern MPS adapter",
-            "method": "ball direction change + arm collision + arm angle",
-            "detector": "YOLO11m on MPS",
-            "pose": "YOLOv8m-Pose on MPS (modern HRNet replacement)",
-            "proximity_override": {
-                "normalized_arm_gap": 0.04,
-                "minimum_ball_confidence": 0.35,
-                "maximum_ball_radius_multiple": 1.5,
+            "available": (
+                GRU_FEATURE_CONFIG.is_file()
+                and GRU_TRAIN_CONFIG.is_file()
+                and all(path.is_file() for path in GRU_CHECKPOINTS)
+            ),
+            "source": "trained five-fold 56-feature handball GRU",
+            "method": "12-frame YOLO/MediaPipe sequence ensemble",
+            "project_root": str(GRU_PROJECT_ROOT),
+            "window_frames": GRU_WINDOW_FRAMES,
+            "fold_checkpoints": {
+                f"fold_{fold}": path.is_file()
+                for fold, path in enumerate(GRU_CHECKPOINTS)
             },
-            "archive_weights_included": False,
-            "archive_training_dataset_included": False,
         },
         "acceleration": {
             "pytorch": "mps" if mps else "cpu",
