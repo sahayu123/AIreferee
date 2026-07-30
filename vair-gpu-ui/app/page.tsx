@@ -48,7 +48,11 @@ type AnalysisResult = {
   report?: string;
 };
 
-const API = "http://localhost:8200";
+const API =
+  typeof window !== "undefined" &&
+  !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)
+    ? ""
+    : "http://localhost:8200";
 
 const modelStack = [
   ["Handball Project", "Ball trajectory + arm-angle geometry"],
