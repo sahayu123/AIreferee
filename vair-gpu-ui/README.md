@@ -30,6 +30,14 @@ npm run dev:full
 The frontend runs at `http://localhost:3200`; the model API runs at
 `http://localhost:8200`.
 
+Completed analytics videos are published as H.264/`avc1`, YUV420p MP4 files
+with fast-start metadata. The backend validates the codec, full frame count,
+and streamability before returning an artifact URL; it will report an explicit
+job error instead of silently serving an incompatible `mp4v` fallback.
+
+For public access, point ngrok at the combined proxy on port `8080`, not the UI
+port `3200`, so `/api/artifacts/...` requests reach the model backend.
+
 Pull the current branch before a future run:
 
 ```bash

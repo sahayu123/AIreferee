@@ -211,6 +211,21 @@ button { color: inherit; }
 .media-name { margin: 6px 0 0; color: #cbd1cd; font-size: 11px; max-width: 600px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .media-frame { background: #050706; aspect-ratio: 16/9; display: grid; place-items: center; position: relative; overflow: hidden; }
 .media-frame video, .media-frame img { width: 100%; height: 100%; object-fit: contain; }
+.playback-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 17px;
+  color: #ffaca8;
+  background: rgba(255,75,69,.08);
+  border-top: 1px solid rgba(255,75,69,.2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.playback-error a { color: var(--lime); font-weight: 700; white-space: nowrap; }
+.playback-error a:hover { color: #d4ff72; }
 .media-frame.image-frame {
   aspect-ratio: auto;
   height: calc(100vh - 204px);

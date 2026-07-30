@@ -133,7 +133,9 @@ export default function Home() {
   const [showKey, setShowKey] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [videoPlaybackError, setVideoPlaybackError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -153,12 +155,26 @@ export default function Home() {
     return `${file.name} · ${size < 1 ? `${Math.round(size * 1024)} KB` : `${size.toFixed(1)} MB`}`;
   }, [file]);
 
+  const annotatedVideoSrc = useMemo(() => {
+    const artifactUrl = result?.annotated_video_url?.trim();
+    if (!artifactUrl) return "";
+    if (/^(?:https?:|blob:|data:)/i.test(artifactUrl)) return artifactUrl;
+    return `${API}${artifactUrl.startsWith("/") ? artifactUrl : `/${artifactUrl}`}`;
+  }, [result?.annotated_video_url]);
+
+  const videoSrc = annotatedVideoSrc || fileUrl;
+
+  useEffect(() => {
+    videoRef.current?.load();
+  }, [videoSrc]);
+
   function chooseFile(next: File | null) {
     if (!next) return;
     if (fileUrl) URL.revokeObjectURL(fileUrl);
     setFile(next);
     setFileUrl(URL.createObjectURL(next));
     setResult(null);
+    setVideoPlaybackError(false);
     setProgress(0);
     setStage("Ready to analyze");
     setState("ready");
@@ -196,6 +212,7 @@ export default function Home() {
     if (!file || !apiKey.trim()) return;
     setState("uploading");
     setResult(null);
+    setVideoPlaybackError(false);
     setProgress(3);
     setStage("Sending media to the local referee");
     try {
@@ -232,6 +249,7 @@ export default function Home() {
     setFile(null);
     setFileUrl("");
     setResult(null);
+    setVideoPlaybackError(false);
     setState("idle");
     setProgress(0);
     setStage("Waiting for media");
@@ -354,7 +372,18 @@ export default function Home() {
 
                 <div className={`media-frame ${mode === "image" ? "image-frame" : ""}`}>
                   {mode === "video" ? (
-                    <video src={result?.annotated_video_url ? `${API}${result.annotated_video_url}` : fileUrl} controls />
+                    <video
+                      key={videoSrc}
+                      ref={videoRef}
+                      src={videoSrc}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      onLoadedMetadata={() => setVideoPlaybackError(false)}
+                      onError={() => {
+                        if (annotatedVideoSrc) setVideoPlaybackError(true);
+                      }}
+                    />
                   ) : (
                     <img src={result?.peak_frame_url ? `${API}${result.peak_frame_url}` : fileUrl} alt="Uploaded incident" />
                   )}
@@ -371,6 +400,20 @@ export default function Home() {
                     </div>
                   )}
                 </div>
+
+                {annotatedVideoSrc && videoPlaybackError && (
+                  <div className="playback-error" role="alert">
+                    <span>The annotated video could not play in this browser.</span>
+                    <a
+                      href={annotatedVideoSrc}
+                      download="annotated-review.mp4"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Download annotated video
+                    </a>
+                  </div>
+                )}
 
                 {result?.timeline?.length ? (
                   <div className="evidence-section">

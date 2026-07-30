@@ -10,9 +10,11 @@ import threading
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import av
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -177,6 +179,196 @@ def sanitize(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [sanitize(item) for item in value]
     return value
+
+
+class BrowserVideoError(RuntimeError):
+    """The annotated review could not be published in a browser-safe format."""
+
+
+def mp4_top_level_atoms(path: Path) -> dict[bytes, int]:
+    """Return the first offset of each valid top-level ISO-BMFF atom."""
+    file_size = path.stat().st_size
+    atoms: dict[bytes, int] = {}
+    offset = 0
+    with path.open("rb") as media:
+        while offset + 8 <= file_size:
+            media.seek(offset)
+            header = media.read(16)
+            if len(header) < 8:
+                break
+            atom_size = int.from_bytes(header[:4], "big")
+            atom_type = header[4:8]
+            header_size = 8
+            if atom_size == 1:
+                if len(header) < 16:
+                    raise BrowserVideoError("truncated extended MP4 atom")
+                atom_size = int.from_bytes(header[8:16], "big")
+                header_size = 16
+            elif atom_size == 0:
+                atom_size = file_size - offset
+            if atom_size < header_size or offset + atom_size > file_size:
+                raise BrowserVideoError("invalid top-level MP4 atom size")
+            atoms.setdefault(atom_type, offset)
+            offset += atom_size
+    return atoms
+
+
+def validate_browser_video(
+    path: Path,
+    *,
+    expected_frames: int | None = None,
+) -> dict[str, Any]:
+    """Require H.264, YUV420p, decodable video, and fast-start metadata."""
+    if not path.is_file() or path.stat().st_size == 0:
+        raise BrowserVideoError("annotated video output is empty")
+    try:
+        with av.open(str(path), mode="r") as container:
+            if len(container.streams.video) != 1:
+                raise BrowserVideoError(
+                    "annotated output must have exactly one video stream"
+                )
+            stream = container.streams.video[0]
+            codec = stream.codec_context.name
+            codec_tag = stream.codec_context.codec_tag
+            pixel_format = (
+                stream.codec_context.format.name
+                if stream.codec_context.format is not None
+                else None
+            )
+            width = int(stream.codec_context.width)
+            height = int(stream.codec_context.height)
+            frame_rate = stream.average_rate
+
+            if codec != "h264" or codec_tag != "avc1":
+                raise BrowserVideoError(
+                    "annotated output is not browser-safe H.264/avc1 "
+                    f"({codec!r}/{codec_tag!r})"
+                )
+            if pixel_format != "yuv420p":
+                raise BrowserVideoError(
+                    f"annotated output pixel format is {pixel_format!r}, not yuv420p"
+                )
+            if width < 2 or height < 2 or width % 2 or height % 2:
+                raise BrowserVideoError("annotated output dimensions are invalid")
+            if frame_rate is None or frame_rate <= 0:
+                raise BrowserVideoError("annotated output frame rate is invalid")
+
+            decoded_frames = sum(1 for _ in container.decode(stream))
+            if decoded_frames == 0:
+                raise BrowserVideoError("annotated output has no decodable frames")
+    except BrowserVideoError:
+        raise
+    except Exception as error:
+        raise BrowserVideoError(f"could not inspect annotated video: {error}") from error
+
+    if expected_frames is not None and decoded_frames != expected_frames:
+        raise BrowserVideoError(
+            "annotated output frame count changed during encoding "
+            f"({decoded_frames} != {expected_frames})"
+        )
+
+    atoms = mp4_top_level_atoms(path)
+    if b"moov" not in atoms or b"mdat" not in atoms:
+        raise BrowserVideoError("annotated output is missing MP4 media metadata")
+    if atoms[b"moov"] > atoms[b"mdat"]:
+        raise BrowserVideoError("annotated output is not optimized for streaming")
+    return {
+        "codec": codec,
+        "codec_tag": codec_tag,
+        "pixel_format": pixel_format,
+        "frames": decoded_frames,
+        "frame_rate": str(frame_rate),
+        "fast_start": True,
+    }
+
+
+def publish_browser_video(source: Path, destination: Path) -> dict[str, Any]:
+    """Atomically transcode an analytics video to browser-safe H.264 MP4."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.NamedTemporaryFile(
+        prefix=f".{destination.stem}-",
+        suffix=".mp4",
+        dir=destination.parent,
+        delete=False,
+    )
+    temporary_path = Path(temporary.name)
+    temporary.close()
+    encoded_frames = 0
+    try:
+        try:
+            details = validate_browser_video(source)
+        except BrowserVideoError:
+            details = None
+        if details is not None:
+            shutil.copy2(source, temporary_path)
+            os.replace(temporary_path, destination)
+            return details
+
+        with av.open(str(source), mode="r") as input_container:
+            if not input_container.streams.video:
+                raise BrowserVideoError("annotated source has no video stream")
+            input_stream = input_container.streams.video[0]
+            frame_rate = (
+                input_stream.average_rate
+                or input_stream.guessed_rate
+                or input_stream.base_rate
+                or Fraction(25, 1)
+            )
+            frame_time_base = Fraction(frame_rate.denominator, frame_rate.numerator)
+            width = int(input_stream.codec_context.width) & ~1
+            height = int(input_stream.codec_context.height) & ~1
+            if width < 2 or height < 2:
+                raise BrowserVideoError("annotated source dimensions are invalid")
+
+            with av.open(
+                str(temporary_path),
+                mode="w",
+                format="mp4",
+                container_options={"movflags": "+faststart"},
+            ) as output_container:
+                output_stream = output_container.add_stream("libx264", rate=frame_rate)
+                output_stream.width = width
+                output_stream.height = height
+                output_stream.pix_fmt = "yuv420p"
+                output_stream.options = {
+                    "preset": "medium",
+                    "crf": "18",
+                    "profile": "high",
+                }
+                output_stream.time_base = frame_time_base
+                output_stream.codec_context.time_base = frame_time_base
+                for frame_index, frame in enumerate(
+                    input_container.decode(input_stream)
+                ):
+                    encoded_frames += 1
+                    frame = frame.reformat(
+                        width=width,
+                        height=height,
+                        format="yuv420p",
+                    )
+                    frame.pts = frame_index
+                    frame.time_base = frame_time_base
+                    for packet in output_stream.encode(frame):
+                        output_container.mux(packet)
+                for packet in output_stream.encode():
+                    output_container.mux(packet)
+
+        if encoded_frames == 0:
+            raise BrowserVideoError("annotated source has no decodable frames")
+        details = validate_browser_video(
+            temporary_path,
+            expected_frames=encoded_frames,
+        )
+        os.replace(temporary_path, destination)
+        return details
+    except BrowserVideoError:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    except Exception as error:
+        temporary_path.unlink(missing_ok=True)
+        raise BrowserVideoError(
+            f"could not encode browser-compatible analytics video: {error}"
+        ) from error
 
 
 def progress_callback(job_id: str):
@@ -392,7 +584,12 @@ def video_analysis(job_id: str, media_path: Path, api_key: str) -> dict[str, Any
     if result.peak_frame is not None:
         cv2.imwrite(str(frame_path), result.peak_frame, [cv2.IMWRITE_JPEG_QUALITY, 94])
     if result.annotated_video:
-        shutil.copy2(result.annotated_video, video_path)
+        update_job(
+            job_id,
+            stage="Encoding browser-compatible analytics video",
+            progress=87,
+        )
+        publish_browser_video(Path(result.annotated_video), video_path)
 
     peak_row = min(
         result.timeline,
